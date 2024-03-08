@@ -1,0 +1,8 @@
+set(PASS_MODULE tutorial)
+add_library(${PASS_MODULE} MODULE InstPass.cpp)
+if (${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
+  target_link_options(${PASS_MODULE} BEFORE PRIVATE -undefined dynamic_lookup)
+endif()
+install(TARGETS ${PASS_MODULE} DESTINATION tutorial)
+install(FILES check.c sum.c DESTINATION tutorial)
+install(PROGRAMS run_tutorial.sh DESTINATION tutorial)
