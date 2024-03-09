@@ -6,14 +6,15 @@ extern "C" {
 
 /**
  * @brief Check if the subscript is out of bound
- * 
- * @param bound 
- * @param subscript 
- * @param file 
+ *
+ * @param bound
+ * @param subscript
+ * @param file
  * @param line debug information, is not reported if line <= 0
  */
 void checkBound(int bound, int subscript, const char *file,
                            int line) {
+  std::cerr << subscript << "/" << bound << std::endl;
   if (subscript < 0 || subscript >= bound) {
     std::cerr << "Array out of bound at " << file;
     if (line > 0) {
