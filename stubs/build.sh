@@ -1,0 +1,1 @@
+clang++ -c BoundCheck.cpp -o BoundCheck.o
