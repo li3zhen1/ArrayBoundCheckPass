@@ -1,5 +1,5 @@
 set(PASS_MODULE proj1)
-add_library(${PASS_MODULE} MODULE Registry.cpp CommonDef.cpp ArrayAccessDetection.cpp BoundCheckInsertion.cpp BoundCheckOptimization.cpp ValueMetadataRemoval.cpp)
+add_library(${PASS_MODULE} MODULE Registry.cpp CommonDef.cpp ArrayAccessDetection.cpp BoundCheckInsertion.cpp BoundCheckOptimization.cpp ValueMetadataRemoval.cpp SubscriptExpr.cpp)
 if (${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
   target_link_options(${PASS_MODULE} BEFORE PRIVATE -undefined dynamic_lookup)
 endif()

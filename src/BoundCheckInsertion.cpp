@@ -61,7 +61,10 @@ PreservedAnalyses BoundCheckInsertion::run(Function &F,
         } else if (GEP->getSourceElementType()->isIntegerTy()) {
           subscript = GEP->getOperand(1);
         } else {
-          throw std::runtime_error("Unknown GEP type.");
+          
+          // GEP->print(errs());
+          subscript = GEP->getOperand(1);
+          // throw std::runtime_error("Unknown GEP type.");
         }
 
 
