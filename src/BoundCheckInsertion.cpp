@@ -30,7 +30,13 @@ PreservedAnalyses BoundCheckInsertion::run(Function &F,
       ln = IRB.getInt64(0);
     }
     IRB.SetInsertPoint(point);
+    // const auto CI = 
     IRB.CreateCall(Check, {arraySize, subscript, file, ln});
+    // attach metadata to the call
+    // CI->setMetadata(ACCESS_KEY, MDNode::get(Context, {
+    //   ValueAsMetadata::get(arraySize),
+    //   ValueAsMetadata::get(subscript),
+    // }));
   };
 
   for (auto &BB : F) {
