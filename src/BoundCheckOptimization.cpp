@@ -19,8 +19,10 @@ void ComputeEffect(Function &F) {
         const Value *bound = CB->getArgOperand(0);
         const Value *checked = CB->getArgOperand(1);
 
-        const SubscriptExpr BoundExpr = SubscriptExpr::traceback(bound);
-        const SubscriptExpr SubExpr = SubscriptExpr::traceback(checked);
+        const SubscriptExpr BoundExpr = SubscriptExpr::evaluate(bound);
+        const SubscriptExpr SubExpr = SubscriptExpr::evaluate(checked);
+
+        CB->print(llvm::errs());
         
         llvm::errs() << "    ";
         BoundExpr.dump(llvm::errs());
@@ -46,6 +48,7 @@ PreservedAnalyses BoundCheckOptimization::run(Function &F,
   llvm::errs() << "BoundCheckOptimization\n";
 
   ComputeEffect(F);
+  
   return PreservedAnalyses::none();
 }
 

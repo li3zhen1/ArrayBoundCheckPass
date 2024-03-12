@@ -20,12 +20,23 @@ struct SubscriptExpr {
 
   void dump(raw_ostream &O) const;
 
-  static SubscriptExpr traceback(const Value *v);
+  static SubscriptExpr evaluate(const Value *v);
 
-  static SubscriptExpr tracebackWithin(const Value *v, const BasicBlock *BB);
 
   bool isConstant() const;
 
   bool operator==(const SubscriptExpr &Other);
+
+  SubscriptExpr operator+(const SubscriptExpr &Other) const;
+
+  SubscriptExpr operator-(const SubscriptExpr &Other) const;
+
+  SubscriptExpr operator+(int64_t c) const;
+
+  SubscriptExpr operator-(int64_t c) const;
+
+  SubscriptExpr operator*(int64_t c) const;
+
+  // SubscriptExpr operator*(const SubscriptExpr &Other, SubscriptExpr& fallback) const;
 
 };
