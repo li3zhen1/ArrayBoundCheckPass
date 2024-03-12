@@ -4,3 +4,5 @@ install
 *.s
 *.ll
 *exe
+.cache
+.vscode
