@@ -6,6 +6,14 @@
 
 using namespace llvm;
 
+using EffectMap =
+    DenseMap<const Value *,
+             DenseMap<const BasicBlock *, std::optional<SubscriptExpr>>>;
+
+/**
+ * @brief Subscript < Bound
+ *
+ */
 struct BoundPredict {
   SubscriptExpr Bound;
   SubscriptExpr Subscript;
@@ -14,13 +22,9 @@ struct BoundPredict {
       : Bound(Bound), Subscript(Subscript) {}
 };
 
-using EffectMap =
-    DenseMap<const Value *,
-             DenseMap<const BasicBlock *, std::optional<SubscriptExpr>>>;
-
 void ComputeEffect(Function &F, EffectMap &effects) {
   // Page 141
-  llvm::SmallPtrSet<const Value *, 32> referencedValues = {};
+  llvm::SmallPtrSet<const Value *, 4> referencedValues = {};
 
   for (const auto &BB : F) {
     llvm::SmallVector<BoundPredict, 4> predicts = {};
@@ -42,31 +46,37 @@ void ComputeEffect(Function &F, EffectMap &effects) {
         }
       }
     }
+  }
 
-    for (const Instruction &Inst : BB) {
-      if (isa<StoreInst>(Inst)) {
-        const auto SI = cast<StoreInst>(&Inst);
-        const auto Ptr = SI->getPointerOperand();
-        if (referencedValues.count(Ptr) > 0) {
-          llvm::errs() << "StoreInst: " << *SI << "\n";
+  {
+    llvm::errs() << "========== Value referenced in subscript ========== \n";
+    for (const auto *RefVal : referencedValues) {
+      llvm::errs() << *RefVal << "\n";
+    }
+    llvm::errs() << "=================================================== \n";
+  }
+
+  for (const auto *RefVal : referencedValues) {
+    llvm::errs() << "------------------- Mutations on ";
+    RefVal->printAsOperand(llvm::errs());
+    llvm::errs() << " ------------------- \n";
+    for (const auto &BB : F) {
+      for (const Instruction &Inst : BB) {
+        if (isa<StoreInst>(Inst)) {
+          const auto SI = cast<StoreInst>(&Inst);
+          const auto Ptr = SI->getPointerOperand();
+          const auto Val = SI->getValueOperand();
+          if (RefVal == Ptr) {
+            SubscriptExpr::evaluate(Val).dump(llvm::errs());
+            llvm::errs() << " --> ";
+            Ptr->printAsOperand(llvm::errs());
+            llvm::errs() << "\n";
+          }
         }
       }
     }
+    llvm::errs() << "------------------------------------------------------------ \n";
   }
-
-  for (const auto *RefVal : referencedValues) {
-    for (const auto &BB : F) {
-      for (const Instruction &Inst : BB) {
-        
-      }
-    }
-  }
-
-  llvm::errs() << "========== Referenced Value ========== \n";
-  for (const auto *RefVal : referencedValues) {
-    llvm::errs() << *RefVal << "\n";
-  }
-  llvm::errs() << "====================================== \n";
 }
 
 PreservedAnalyses BoundCheckOptimization::run(Function &F,
@@ -76,7 +86,7 @@ PreservedAnalyses BoundCheckOptimization::run(Function &F,
   }
   llvm::errs() << "BoundCheckOptimization\n";
 
-  EffectMap effects {};
+  EffectMap effects{};
 
   ComputeEffect(F, effects);
 
