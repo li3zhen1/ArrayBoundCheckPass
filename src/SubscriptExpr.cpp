@@ -1,5 +1,6 @@
 
 #include "SubscriptExpr.h"
+#include "CommonDef.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Operator.h"
 #include <cassert>
@@ -17,7 +18,7 @@ void SubscriptExpr::mutatingMul(int64_t c) {
 }
 
 void SubscriptExpr::dump(raw_ostream &O) const {
-  O << "<";
+  O << "(";
   if (isConstant()) {
     O << B;
   } else {
@@ -35,7 +36,7 @@ void SubscriptExpr::dump(raw_ostream &O) const {
       }
     }
   }
-  O << ">";
+  O << ")";
 }
 
 /**
@@ -46,6 +47,12 @@ void SubscriptExpr::dump(raw_ostream &O) const {
  * @return SubscriptExpr
  */
 SubscriptExpr SubscriptExpr::evaluate(const Value *v) {
+#if _DEBUG_PRINT
+  llvm::errs() << "Evaluating ";
+  v->print(errs());
+  llvm::errs() << "\n";
+#endif
+
   if (isa<SExtInst>(v)) {
     return evaluate(cast<SExtInst>(v)->getOperand(0));
   } else if (isa<ZExtInst>(v)) {
@@ -111,14 +118,17 @@ SubscriptExpr SubscriptExpr::evaluate(const Value *v) {
     int64_t B = cast<ConstantInt>(v)->getSExtValue();
     return {1, nullptr, B};
   } else {
-    llvm::errs() << " ===== Unexpected instruction ====== \n";
-    cast<Instruction>(v)->print(errs());
-    llvm_unreachable("===== Unexpected instruction ====== \n");
-    // return {1, v, 0};
+    // noundef?
+    return {1, v, 0};
   }
 }
 
 bool SubscriptExpr::isConstant() const { return i == nullptr || A == 0; }
+
+int64_t SubscriptExpr::getConstant() const {
+  assert(isConstant());
+  return B;
+}
 
 bool SubscriptExpr::operator==(const SubscriptExpr &Other) {
   return A == Other.A && i == Other.i && B == Other.B;
@@ -145,4 +155,20 @@ SubscriptExpr SubscriptExpr::operator+(int64_t c) const {
 
 SubscriptExpr SubscriptExpr::operator-(int64_t c) const {
   return {A, i, B - c};
+}
+
+bool SubscriptExpr::decreasesWhenVIncreases() const {
+  return A < 0;
+}
+
+bool SubscriptExpr::increasesWhenVIncreases() const {
+  return A > 0;
+}
+
+bool SubscriptExpr::decreasesWhenVDecreases() const {
+  return A > 0;
+}
+
+bool SubscriptExpr::increasesWhenVDecreases() const {
+  return A < 0;
 }

@@ -3,6 +3,8 @@
 
 using namespace llvm;
 
+
+
 PreservedAnalyses BoundCheckInsertion::run(Function &F,
                                            FunctionAnalysisManager &FAM) {
   if (!isCProgram(F.getParent()) && isCxxSTLFunc(F.getName())) {
@@ -30,13 +32,7 @@ PreservedAnalyses BoundCheckInsertion::run(Function &F,
       ln = IRB.getInt64(0);
     }
     IRB.SetInsertPoint(point);
-    // const auto CI = 
     IRB.CreateCall(Check, {arraySize, subscript, file, ln});
-    // attach metadata to the call
-    // CI->setMetadata(ACCESS_KEY, MDNode::get(Context, {
-    //   ValueAsMetadata::get(arraySize),
-    //   ValueAsMetadata::get(subscript),
-    // }));
   };
 
   for (auto &BB : F) {
@@ -66,37 +62,39 @@ PreservedAnalyses BoundCheckInsertion::run(Function &F,
           subscript = GEP->getOperand(1);
           // throw std::runtime_error("Unknown GEP type.");
         }
+        
+        createCheckBoundCall(&I, Bound, subscript);
 
 
         // FIXME: Not used
-        Value* mallocSizeIfExist = nullptr;
-        if (MN->getNumOperands() > 2) {
-          // When the array type is "dynamic array", the metadata also provide a
-          // reference to the associated malloc invocation
-          CallBase *Allocator = cast<CallBase>(
-              cast<ValueAsMetadata>(MN->getOperand(2).get())->getValue());
-          mallocSizeIfExist = Allocator->getOperand(0);
-          // this should be size_of_type * array_size
-        }
+        // Value* mallocSizeIfExist = nullptr;
+        // if (MN->getNumOperands() > 2) {
+        //   // When the array type is "dynamic array", the metadata also provide a
+        //   // reference to the associated malloc invocation
+        //   CallBase *Allocator = cast<CallBase>(
+        //       cast<ValueAsMetadata>(MN->getOperand(2).get())->getValue());
+        //   mallocSizeIfExist = Allocator->getOperand(0);
+        //   // this should be size_of_type * array_size
+        // }
 
-        if (const auto *CI = dyn_cast<ConstantInt>(Bound)) {
-          // dynamic / static
-          // const auto arraySize = CI->getValue();
-          // const auto arraySizeValue = ConstantInt::get(IRB.getInt64Ty(), arraySize.getZExtValue());
-          createCheckBoundCall(&I, Bound, subscript);
+        // if (const auto *CI = dyn_cast<ConstantInt>(Bound)) {
+        //   // dynamic / static
+        //   // const auto arraySize = CI->getValue();
+        //   // const auto arraySizeValue = ConstantInt::get(IRB.getInt64Ty(), arraySize.getZExtValue());
+        //   createCheckBoundCall(&I, Bound, subscript);
 
-        } else if (const auto *Inst = dyn_cast<Instruction>(Bound)) {
-          // dynamic array
-          // const auto arraySize = Inst->getOperand(0);
-          createCheckBoundCall(&I, Bound, subscript);
+        // } else if (const auto *Inst = dyn_cast<Instruction>(Bound)) {
+        //   // dynamic array
+        //   // const auto arraySize = Inst->getOperand(0);
+        //   createCheckBoundCall(&I, Bound, subscript);
 
-        } else if (const auto *GV = dyn_cast<GlobalVariable>(Bound)) {
-          // dynamic array
-          // const auto arraySize = GV->getInitializer();
-          createCheckBoundCall(&I, Bound, subscript);
-        } else {
-          llvm_unreachable("Unknown Bound type.");
-        }
+        // } else if (const auto *GV = dyn_cast<GlobalVariable>(Bound)) {
+        //   // dynamic array
+        //   // const auto arraySize = GV->getInitializer();
+        //   createCheckBoundCall(&I, Bound, subscript);
+        // } else {
+        //   llvm_unreachable("Unknown Bound type.");
+        // }
       }
     }
   }

@@ -9,6 +9,11 @@
 extern const char *ACCESS_KEY;
 constexpr uint64_t UNKNOWN = 0;
 
+#define _DEBUG_PRINT 0
+
+#define VERBOSE_PRINT if (true)
+// #undef _DEBUG_PRINT
+
 enum ArrayCategory : unsigned {
   SingleDimensionalArray = 0,
   MultiDimensionalArray = 1,

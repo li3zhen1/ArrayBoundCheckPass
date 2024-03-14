@@ -25,6 +25,8 @@ struct SubscriptExpr {
 
   bool isConstant() const;
 
+  int64_t getConstant() const;
+
   bool operator==(const SubscriptExpr &Other);
 
   SubscriptExpr operator+(const SubscriptExpr &Other) const;
@@ -36,6 +38,11 @@ struct SubscriptExpr {
   SubscriptExpr operator-(int64_t c) const;
 
   SubscriptExpr operator*(int64_t c) const;
+
+  bool decreasesWhenVIncreases() const;
+  bool increasesWhenVIncreases() const;
+  bool decreasesWhenVDecreases() const;
+  bool increasesWhenVDecreases() const;
 
   // SubscriptExpr operator*(const SubscriptExpr &Other, SubscriptExpr& fallback) const;
 
