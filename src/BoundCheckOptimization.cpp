@@ -1,6 +1,8 @@
 #include "BoundCheckOptimization.h"
 #include "CommonDef.h"
 #include "SubscriptExpr.h"
+// #include "BoundPredicate.h"
+// #include "BoundPredicateSet.h"
 #include <cstdint>
 #include <optional>
 
@@ -496,6 +498,11 @@ PreservedAnalyses BoundCheckOptimization::run(Function &F,
   CMap C_GEN{};
   CMap C_IN{};
   CMap C_OUT{};
+  // BoundPredicateSet BPS;
+  // UpperBoundPredicate UBP{
+  //   {1, nullptr, 0},
+  //   {1, nullptr, 0}
+  // };
   EffectMap Effects{};
   SmallPtrSet<const Value *, 4> ValuesReferencedInBoundCheck = {};
 

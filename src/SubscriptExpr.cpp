@@ -164,3 +164,5 @@ bool SubscriptExpr::increasesWhenVIncreases() const { return A > 0; }
 bool SubscriptExpr::decreasesWhenVDecreases() const { return A > 0; }
 
 bool SubscriptExpr::increasesWhenVDecreases() const { return A < 0; }
+
+SubscriptIndentity SubscriptExpr::getIdentity() const { return {A, i}; }

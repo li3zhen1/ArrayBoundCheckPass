@@ -1,11 +1,31 @@
-#pragma once
+#ifndef UTILS_H
+#define UTILS_H
 
 #include "llvm/IR/Value.h"
 #include "llvm/Support/raw_ostream.h"
 
+
 using namespace llvm;
 
+typedef std::pair<int64_t, const Value *> SubscriptIndentity;
+
+// hash
+namespace std {
+template <> struct hash<SubscriptIndentity> {
+  std::size_t operator()(const SubscriptIndentity &k) const {
+    using std::hash;
+    using std::size_t;
+    using std::string;
+
+    return (
+        (hash<int64_t>()(k.first) ^ (hash<const Value *>()(k.second) << 1)) >>
+        1);
+  }
+};
+} // namespace std
+
 struct SubscriptExpr {
+
   int64_t A;
   const Value *i;
   int64_t B;
@@ -38,6 +58,13 @@ struct SubscriptExpr {
 
   SubscriptExpr operator*(int64_t c) const;
 
+  /**
+   * @brief Get the Identity object, {A,i}
+   *
+   * @return SubscriptIndentity
+   */
+  SubscriptIndentity getIdentity() const;
+
   bool decreasesWhenVIncreases() const;
   bool increasesWhenVIncreases() const;
   bool decreasesWhenVDecreases() const;
@@ -59,3 +86,6 @@ template <> struct hash<SubscriptExpr> {
   }
 };
 } // namespace std
+
+
+#endif
