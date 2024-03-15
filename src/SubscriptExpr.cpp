@@ -157,18 +157,10 @@ SubscriptExpr SubscriptExpr::operator-(int64_t c) const {
   return {A, i, B - c};
 }
 
-bool SubscriptExpr::decreasesWhenVIncreases() const {
-  return A < 0;
-}
+bool SubscriptExpr::decreasesWhenVIncreases() const { return A < 0; }
 
-bool SubscriptExpr::increasesWhenVIncreases() const {
-  return A > 0;
-}
+bool SubscriptExpr::increasesWhenVIncreases() const { return A > 0; }
 
-bool SubscriptExpr::decreasesWhenVDecreases() const {
-  return A > 0;
-}
+bool SubscriptExpr::decreasesWhenVDecreases() const { return A > 0; }
 
-bool SubscriptExpr::increasesWhenVDecreases() const {
-  return A < 0;
-}
+bool SubscriptExpr::increasesWhenVDecreases() const { return A < 0; }

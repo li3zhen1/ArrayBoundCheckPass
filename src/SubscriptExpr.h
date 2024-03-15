@@ -22,7 +22,6 @@ struct SubscriptExpr {
 
   static SubscriptExpr evaluate(const Value *v);
 
-
   bool isConstant() const;
 
   int64_t getConstant() const;
@@ -44,6 +43,19 @@ struct SubscriptExpr {
   bool decreasesWhenVDecreases() const;
   bool increasesWhenVDecreases() const;
 
-  // SubscriptExpr operator*(const SubscriptExpr &Other, SubscriptExpr& fallback) const;
-
+  // SubscriptExpr operator*(const SubscriptExpr &Other, SubscriptExpr&
+  // fallback) const;
 };
+
+namespace std {
+template <> struct hash<SubscriptExpr> {
+  std::size_t operator()(const SubscriptExpr &k) const {
+    using std::hash;
+    using std::size_t;
+    using std::string;
+
+    return ((hash<int64_t>()(k.A) ^ (hash<const Value *>()(k.i) << 1)) >> 1) ^
+           (hash<int64_t>()(k.B) << 1);
+  }
+};
+} // namespace std

@@ -35,6 +35,13 @@ struct SingleDirectionBoundCheckPredict {
     }
     llvm::errs() << "\n";
   }
+
+  // void simplify() {
+  //   if (Subscript.B != 0) {
+  //     Bound.B -= Subscript.B;
+  //     Subscript.B = 0;
+  //   }
+  // }
 };
 
 using BoundCheckList = SmallVector<SingleDirectionBoundCheckPredict, 4>;
@@ -91,8 +98,156 @@ struct EffectOnSubscript {
   std::optional<uint64_t> c;
 };
 
-BoundCheckList Conjunction(const BoundCheckList &BCL) {
-  throw std::runtime_error("Not implemented");
+// void Simplify(BoundCheckList &BCL) {
+//   for (auto &BCP : BCL) {
+//     BCP.simplify();
+//   }
+// }
+
+BoundCheckList SimplifyAndIntersect(BoundCheckList &lhs) {
+
+  DenseMap<int64_t /* A */, BoundCheckList> GroupedByA_lb_le_v{};
+  DenseMap<int64_t /* A */, BoundCheckList> GroupedByA_v_le_ub{};
+
+  // for (auto &BCP : rhs) {
+  //   BCP.simplify();
+  //   auto _A = BCP.Subscript.A;
+  //   if (BCP.Kind == BoundCheckKind::lb_le_v) {
+  //     if (GroupedByA_lb_le_v.find(_A) == GroupedByA_lb_le_v.end()) {
+  //       GroupedByA_lb_le_v[_A] = {};
+  //     }
+  //     GroupedByA_lb_le_v[_A].push_back(BCP);
+  //   } else { // v_le_ub
+  //     if (GroupedByA_v_le_ub.find(_A) == GroupedByA_v_le_ub.end()) {
+  //       GroupedByA_v_le_ub[_A] = {};
+  //     }
+  //     GroupedByA_v_le_ub[_A].push_back(BCP);
+  //   }
+  // }
+  for (auto &BCP : lhs) {
+    // BCP.simplify();
+    auto _A = BCP.Subscript.A;
+    if (BCP.Kind == BoundCheckKind::lb_le_v) {
+      if (GroupedByA_lb_le_v.find(_A) == GroupedByA_lb_le_v.end()) {
+        GroupedByA_lb_le_v[_A] = {};
+      }
+      GroupedByA_lb_le_v[_A].push_back(BCP);
+    } else { // v_le_ub
+      if (GroupedByA_v_le_ub.find(_A) == GroupedByA_v_le_ub.end()) {
+        GroupedByA_v_le_ub[_A] = {};
+      }
+      GroupedByA_v_le_ub[_A].push_back(BCP);
+    }
+  }
+
+  DenseMap<int64_t /* A */, BoundCheckList> Intersected_lb_le_v{};
+  DenseMap<int64_t /* A */, BoundCheckList> Intersected_v_le_ub{};
+  // after grouping, we only need the maximum UpperBound and minimum LowerBound
+  for (const auto &[A, Predict] : GroupedByA_lb_le_v) {
+    BoundCheckList MinLowerBounds = {};
+    const Value *v = nullptr;
+    for (const auto &BCP : Predict) {
+      // find first comparable LowerBound
+      auto *FirstComparableLowerBound =
+          llvm::find_if(MinLowerBounds, [&](const auto &P) {
+            return P.Subscript.i == BCP.Subscript.i &&
+                   P.Subscript.A == BCP.Subscript.A;
+          });
+      if (FirstComparableLowerBound != nullptr) {
+        FirstComparableLowerBound->Bound.B =
+            std::max(FirstComparableLowerBound->Bound.B, BCP.Bound.B);
+      } else {
+        MinLowerBounds.push_back(BCP);
+      }
+    }
+    Intersected_lb_le_v[A] = MinLowerBounds;
+  }
+
+  for (const auto &[A, Predict] : GroupedByA_v_le_ub) {
+    BoundCheckList MaxUpperBounds = {};
+    const Value *v = nullptr;
+    for (const auto &BCP : Predict) {
+      // find first comparable UpperBound
+      auto *FirstComparableUpperBound =
+          llvm::find_if(MaxUpperBounds, [&](const auto &P) {
+            return P.Subscript.i == BCP.Subscript.i &&
+                   P.Subscript.A == BCP.Subscript.A;
+          });
+      if (FirstComparableUpperBound != nullptr) {
+        FirstComparableUpperBound->Bound.B =
+            std::min(FirstComparableUpperBound->Bound.B, BCP.Bound.B);
+      } else {
+        MaxUpperBounds.push_back(BCP);
+      }
+    }
+    Intersected_v_le_ub[A] = MaxUpperBounds;
+  }
+
+  BoundCheckList Result = {};
+
+  for (const auto &[A, Predict] : Intersected_lb_le_v) {
+    for (const auto &BCP : Predict) {
+      Result.push_back(BCP);
+    }
+  }
+
+  for (const auto &[A, Predict] : Intersected_v_le_ub) {
+    for (const auto &BCP : Predict) {
+      Result.push_back(BCP);
+    }
+  }
+
+  return Result;
+}
+
+BoundCheckList Union(BoundCheckList &S1, BoundCheckList &&S2) {
+  using namespace std;
+  using AandI = pair<int64_t, const Value *>;
+
+  // this should work if Bound always has identical A and i
+  DenseMap<pair</*Bound*/ AandI, /*Subscript*/ AandI>, BoundCheckList>
+      lbChecks{}, ubChecks{};
+
+  const auto getID = [](const SingleDirectionBoundCheckPredict &BCP) {
+    return make_pair(make_pair(BCP.Bound.A, BCP.Bound.i),
+                     make_pair(BCP.Subscript.A, BCP.Subscript.i));
+  };
+
+  for (auto &BCP : S1) {
+    const auto ID = getID(BCP);
+    if (BCP.Kind == BoundCheckKind::lb_le_v) {
+      if (lbChecks.find(ID) == lbChecks.end()) {
+        lbChecks[ID] = {};
+      }
+      lbChecks[ID].push_back(BCP);
+    } else {
+      if (ubChecks.find(ID) == ubChecks.end()) {
+        ubChecks[ID] = {};
+      }
+      ubChecks[ID].push_back(BCP);
+    }
+  }
+
+  for (auto &BCP : S2) {
+    if (BCP.Kind == BoundCheckKind::lb_le_v) {
+      const auto similarCheck = lbChecks.find(getID(BCP));
+      if (similarCheck != lbChecks.end()) {
+        // Lowest LowerBound
+        BoundCheckList LowestLowerBound = {};
+        for (auto &BCP2 : similarCheck->second) {
+          if (BCP2.Bound.B < BCP.Bound.B) {
+            BCP2.Bound.B = BCP.Bound.B;
+          }
+        }
+      } else {
+        lbChecks[getID(BCP)].push_back(BCP);
+      }
+    } else {
+      ubChecks[getID(BCP)].push_back(BCP);
+    }
+  }
+
+  return {};
 }
 
 void ComputeEffects(
@@ -213,9 +368,8 @@ void BackwardAnalysis(
     auto S = BoundCheckList{};
     if (!C_OUT_B.empty()) {
       const auto *v = C_OUT_B[0].Subscript.i;
-      assert(llvm::any_of(C_OUT_B, [&](const BoundCheckPredict &BCP) {
-        return BCP.Subscript.i == v;
-      }));
+      assert(std::all_of(C_OUT_B.begin(), C_OUT_B.end(),
+                         [v](const auto &C) { return C.Subscript.i == v; }));
 
       const auto &Effect = EFFECT(B, v);
       for (const auto &check_C : C_OUT_B) {
@@ -295,9 +449,16 @@ void BackwardAnalysis(
   while (!WorkList.empty()) {
     const auto *BB = WorkList.pop_back_val();
 
+    C_IN[BB] = Union(C_GEN[BB], backward(C_OUT[BB], BB));
+
     if (succ_begin(BB) != succ_end(BB)) {
+      BoundCheckList successorPredicts = {};
       for (const auto *Succ : successors(BB)) {
+        for (auto &BCP : C_IN[Succ]) {
+          successorPredicts.push_back(BCP);
+        }
       }
+      C_OUT[BB] = SimplifyAndIntersect(successorPredicts);
       // for (const auto &P : C_GEN[BB]) {
       //   const auto &Bound = P.UpperBound;
       //   const auto &Subscript = P.Subscript;
