@@ -53,13 +53,68 @@ BoundPredicateSet
 BoundPredicateSet::Or(std::initializer_list<const BoundPredicateSet> Sets) {
   BoundPredicateSet Result;
 
+  for (const auto &S : Sets) {
+    for (const auto &LP : S.LbPredicates) {
+      if (Result.LbPredicates.empty()) {
+        Result.LbPredicates.push_back(LP);
+      } else {
+        auto &Last = Result.LbPredicates.back();
+        if (LP.getIdentity() == Last.getIdentity()) {
+          Last.Bound.B = std::min(Last.Bound.B, LP.Bound.B);
+        } else {
+          llvm_unreachable("Should not be different identity.");
+          Result.LbPredicates.push_back(LP);
+        }
+      }
+    }
+    for (const auto &It : S.UbPredicates) {
+      if (Result.UbPredicates.empty()) {
+        Result.UbPredicates.push_back(It);
+      } else {
+        auto &Last = Result.UbPredicates.back();
+        if (It.getIdentity() == Last.getIdentity()) {
+          Last.Bound.B = std::max(Last.Bound.B, It.Bound.B);
+        } else {
+          llvm_unreachable("Should not be different identity.");
+          Result.UbPredicates.push_back(It);
+        }
+      }
+    }
+  }
   return Result;
 }
 
 BoundPredicateSet
 BoundPredicateSet::And(std::initializer_list<const BoundPredicateSet> Sets) {
   BoundPredicateSet Result;
-
+  for (const auto &S : Sets) {
+    for (const auto &LP : S.LbPredicates) {
+      if (Result.LbPredicates.empty()) {
+        Result.LbPredicates.push_back(LP);
+      } else {
+        auto &Last = Result.LbPredicates.back();
+        if (LP.getIdentity() == Last.getIdentity()) {
+          Last.Bound.B = std::max(Last.Bound.B, LP.Bound.B);
+        } else {
+          llvm_unreachable("Should not be different identity.");
+          Result.LbPredicates.push_back(LP);
+        }
+      }
+    }
+    for (const auto &It : S.UbPredicates) {
+      if (Result.UbPredicates.empty()) {
+        Result.UbPredicates.push_back(It);
+      } else {
+        auto &Last = Result.UbPredicates.back();
+        if (It.getIdentity() == Last.getIdentity()) {
+          Last.Bound.B = std::min(Last.Bound.B, It.Bound.B);
+        } else {
+          llvm_unreachable("Should not be different identity.");
+          Result.UbPredicates.push_back(It);
+        }
+      }
+    }
+  }
   return Result;
 }
 
@@ -68,6 +123,7 @@ void BoundPredicateSet::print(raw_ostream &O) const {
   for (const auto &It : LbPredicates) {
     It.print(O);
   }
+  errs() << "\n";
   for (const auto &It : UbPredicates) {
     It.print(O);
   }

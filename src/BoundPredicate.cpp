@@ -4,7 +4,7 @@ BoundPredicateIdentity BoundPredicateBase::getIdentity() const {
   return {Bound.getIdentity(), Index.getIdentity()};
 }
 
-bool BoundPredicateIdentity::operator==(const BoundPredicateIdentity &Other) {
+bool BoundPredicateIdentity::operator==(const BoundPredicateIdentity &Other) const {
   return BoundIdentity == Other.BoundIdentity &&
          IndexIdentity == Other.IndexIdentity;
 }

@@ -12,7 +12,7 @@ struct BoundPredicateIdentity {
                          SubscriptIndentity IndexIdentity)
       : BoundIdentity(BoundIdentity), IndexIdentity(IndexIdentity) {}
 
-  bool operator==(const BoundPredicateIdentity &Other);
+  bool operator==(const BoundPredicateIdentity &Other) const;
 };
 
 namespace std {
