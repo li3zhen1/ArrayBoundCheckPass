@@ -11,7 +11,7 @@ using BoundCheckSetList = SmallVector<BoundPredicateSet>;
 
 using CMap =
     SmallDenseMap<const Value *,
-                  SmallDenseMap<const BasicBlock *, BoundCheckSetList>>;
+                  SmallDenseMap<const BasicBlock *, BoundPredicateSet>>;
 
 using ValuePtrSet = SmallPtrSet<const Value *, 32>;
 using EffectMap =
@@ -26,10 +26,7 @@ void print(CMap &C, raw_ostream &O) {
     for (const auto &BB : It.second) {
       BB.first->printAsOperand(O);
       O << "\n";
-      for (const auto &BCP : BB.second) {
-        BCP.print(O);
-        O << "\n";
-      }
+      BB.second.print(O);
     }
     O << "\n";
   }
@@ -61,10 +58,10 @@ void InitializeToEmpty(Function &F, CMap &C, const ValuePtrSet &ValueKeys) {
 void ComputeEffects(Function &F, CMap &Grouped_C_GEN, EffectMap &effects,
                     ValuePtrSet &ValuesReferencedInBoundCheck) {
 
-  SmallDenseMap<const BasicBlock *, BoundCheckSetList> C_GEN{};
+  SmallDenseMap<const BasicBlock *, BoundPredicateSet> C_GEN{};
 
   for (const auto &BB : F) {
-    BoundCheckSetList predicts = {};
+    BoundPredicateSet predicts = {};
     for (const Instruction &Inst : BB) {
       if (isa<CallInst>(Inst)) {
         const auto CB = cast<CallInst>(&Inst);
@@ -79,12 +76,12 @@ void ComputeEffects(Function &F, CMap &Grouped_C_GEN, EffectMap &effects,
           if (!SubExpr.isConstant()) {
             ValuesReferencedInBoundCheck.insert(SubExpr.i);
           }
-          BoundPredicateSet BCS;
+          // BoundPredicateSet BCS;
 
-          BCS.addPredicate(UpperBoundPredicate{BoundExpr - 1, SubExpr});
-          BCS.addPredicate(
+          predicts.addPredicate(UpperBoundPredicate{BoundExpr - 1, SubExpr});
+          predicts.addPredicate(
               LowerBoundPredicate{SubscriptExpr::getZero(), SubExpr});
-          predicts.push_back(BCS);
+          // predicts.push_back(BCS);
         }
       }
     }
@@ -95,15 +92,10 @@ void ComputeEffects(Function &F, CMap &Grouped_C_GEN, EffectMap &effects,
     llvm::errs() << "\n\n===================== Bound checks normalized "
                     "===================== \n\n";
     for (const auto &CG : C_GEN) {
-      if (CG.second.empty()) {
-        continue;
-      }
       llvm::errs() << "----- BoundCheckSet(s) in ";
       CG.first->printAsOperand(llvm::errs());
       llvm::errs() << "----- \n";
-      for (const auto &BCP : CG.second) {
-        BCP.print(llvm::errs());
-      }
+      CG.second.print(llvm::errs());
       llvm::errs() << "---------------------------------------- \n\n\n";
     }
 
@@ -160,10 +152,10 @@ void ComputeEffects(Function &F, CMap &Grouped_C_GEN, EffectMap &effects,
 
   InitializeToEmpty(F, Grouped_C_GEN, ValuesReferencedInBoundCheck);
   for (const auto &CG : C_GEN) {
-    for (const auto &BCP : CG.second) {
-      Grouped_C_GEN[BCP.getSubscriptIdentity()->second][CG.first].push_back(
-          BCP);
-    }
+    // for (const auto &BCP : CG.second) {
+    Grouped_C_GEN[CG.second.getSubscriptIdentity()->second][CG.first] =
+        CG.second;
+    // }
   }
 
   VERBOSE_PRINT {
@@ -173,155 +165,9 @@ void ComputeEffects(Function &F, CMap &Grouped_C_GEN, EffectMap &effects,
   }
 }
 
-// void BackwardAnalysis(
-//     Function &F, CMap &C_IN, CMap &C_OUT, CMap &C_GEN,
-//     std::function<EffectOnSubscript(const BasicBlock *, const Value *)>
-//         EFFECT) {
-
-//   SmallVector<const BasicBlock *, 32> WorkList{};
-//   SmallPtrSet<const BasicBlock *, 32> Visited{};
-//   WorkList.push_back(&F.back());
-
-//   auto backward = [&](BoundCheckSetList &C_OUT_B,
-//                       const BasicBlock *B) -> BoundCheckSetList {
-// #define KILL_CHECK break
-//     auto S = BoundCheckSetList{};
-//     if (!C_OUT_B.empty()) {
-//       const auto *v = C_OUT_B[0].getSubscriptIdentity().value().second;
-//       assert(std::all_of(C_OUT_B.begin(), C_OUT_B.end(),
-//                          [v](const auto &C) { return C.Subscript.i == v; }));
-
-//       const auto &Effect = EFFECT(B, v);
-//       for (const auto &check_C : C_OUT_B) {
-//         if (check_C.isIdentityCheck()) {
-//           if (check_C.Kind == BoundCheckKind::lb_le_v) {
-//             switch (Effect.kind) {
-//             case EffectKind::Unchanged:
-//             case EffectKind::Decrement:
-//               S.push_back(check_C);
-//               break;
-//             case EffectKind::Increment:
-//             case EffectKind::Multiply:
-//             case EffectKind::UnknownChanged:
-//               KILL_CHECK;
-//             }
-//             break;
-//           } else if (check_C.Kind == BoundCheckKind::v_le_ub) {
-//             switch (Effect.kind) {
-//             case EffectKind::Unchanged:
-//             case EffectKind::Increment:
-//             case EffectKind::Multiply:
-//               S.push_back(check_C);
-//               break;
-//             case EffectKind::Decrement:
-//             case EffectKind::UnknownChanged:
-//               KILL_CHECK;
-//             }
-//             break;
-//           }
-//         } else {
-//           /** f(v) case */
-//           if (check_C.Kind == BoundCheckKind::lb_le_v) {
-//             switch (Effect.kind) {
-//             case EffectKind::Unchanged:
-//               S.push_back(check_C);
-//             case EffectKind::Increment:
-//             case EffectKind::Multiply:
-//               if (check_C.Subscript.decreasesWhenVIncreases()) {
-//                 S.push_back(check_C);
-//               }
-//               break;
-//             case EffectKind::Decrement:
-//               if (check_C.Subscript.decreasesWhenVDecreases()) {
-//                 S.push_back(check_C);
-//               }
-//               break;
-//             case EffectKind::UnknownChanged:
-//               KILL_CHECK;
-//             }
-//           } else if (check_C.Kind == BoundCheckKind::v_le_ub) {
-//             switch (Effect.kind) {
-//             case EffectKind::Unchanged:
-//               S.push_back(check_C);
-//               break;
-//             case EffectKind::Increment:
-//             case EffectKind::Multiply:
-//               if (check_C.Subscript.increasesWhenVIncreases()) {
-//                 S.push_back(check_C);
-//               }
-//               break;
-//             case EffectKind::Decrement:
-//               if (check_C.Subscript.increasesWhenVDecreases()) {
-//                 S.push_back(check_C);
-//               }
-//               break;
-//             case EffectKind::UnknownChanged:
-//               KILL_CHECK;
-//             }
-//           }
-//         }
-//       }
-//     }
-// #undef KILL_CHECK
-//     return S;
-//   };
-
-//   while (!WorkList.empty()) {
-//     const auto *BB = WorkList.pop_back_val();
-
-//     C_IN[BB] = Union(C_GEN[BB], backward(C_OUT[BB], BB));
-
-//     if (succ_begin(BB) != succ_end(BB)) {
-//       BoundCheckList successorPredicts = {};
-//       for (const auto *Succ : successors(BB)) {
-//         for (auto &BCP : C_IN[Succ]) {
-//           successorPredicts.push_back(BCP);
-//         }
-//       }
-//       C_OUT[BB] = SimplifyAndIntersect(successorPredicts);
-//       // for (const auto &P : C_GEN[BB]) {
-//       //   const auto &Bound = P.UpperBound;
-//       //   const auto &Subscript = P.Subscript;
-//       //   const auto &E = EFFECT(BB, Subscript.i);
-//       //   switch (E.kind) {
-//       //   case EffectKind::Unchanged:
-//       //     break;
-//       //   case EffectKind::Increment:
-//       //     break;
-//       //   case EffectKind::Decrement:
-//       //     break;
-//       //   case EffectKind::Multiply:
-//       //     break;
-//       //   case EffectKind::UnknownChanged:
-//       //     break;
-//       //   }
-//       // }
-//     }
-//     Visited.insert(BB);
-//     for (const auto *Pred : predecessors(BB)) {
-//       if (Visited.find(Pred) == Visited.end()) {
-//         WorkList.push_back(Pred);
-//       }
-//     }
-//   }
-// }
-
-PreservedAnalyses BoundCheckOptimization::run(Function &F,
-                                              FunctionAnalysisManager &FAM) {
-  if (!isCProgram(F.getParent()) && isCxxSTLFunc(F.getName())) {
-    return PreservedAnalyses::all();
-  }
-  llvm::errs() << "BoundCheckOptimization\n";
-
-  CMap C_GEN{};
-  CMap C_IN{};
-  CMap C_OUT{};
-
-  EffectMap Effects{};
-  ValuePtrSet ValuesReferencedInSubscript = {};
-  ValuePtrSet ValuesReferencedInBound = {};
-
-  ComputeEffects(F, C_GEN, Effects, ValuesReferencedInSubscript);
+void BackwardAnalysis(Function &F, CMap &C_IN, CMap &C_OUT, CMap &C_GEN,
+                      EffectMap &Effects,
+                      ValuePtrSet &ValuesReferencedInSubscript) {
 
   auto EFFECT = [&](const BasicBlock *B, const Value *V) -> EffectOnSubscript {
     const auto &SE = Effects[V][B];
@@ -347,8 +193,155 @@ PreservedAnalyses BoundCheckOptimization::run(Function &F,
     return {EffectKind::UnknownChanged, std::nullopt};
   };
 
+  auto backward = [&](const Value *V, BoundPredicateSet &C_OUT_B,
+                      const BasicBlock *B) -> BoundPredicateSet {
+#define KILL_CHECK break
+    BoundPredicateSet S{};
+
+    const auto &Effect = EFFECT(B, V);
+    
+    for (auto &check_C : C_OUT_B.getAllPredicates()) {
+      if (auto *LBP = std::get_if<LowerBoundPredicate>(&check_C)) {
+        if (LBP->isIdentityCheck()) {
+          switch (Effect.kind) {
+          case EffectKind::Unchanged:
+          case EffectKind::Decrement:
+            S.addPredicate(*LBP);
+            break;
+          case EffectKind::Increment:
+          case EffectKind::Multiply:
+          case EffectKind::UnknownChanged:
+            KILL_CHECK;
+          }
+          break;
+        } else {
+          switch (Effect.kind) {
+          case EffectKind::Unchanged:
+            S.addPredicate(*LBP);
+          case EffectKind::Increment:
+          case EffectKind::Multiply:
+            if (LBP->Index.decreasesWhenVIncreases()) {
+              S.addPredicate(*LBP);
+            }
+            break;
+          case EffectKind::Decrement:
+            if (LBP->Index.decreasesWhenVDecreases()) {
+              S.addPredicate(*LBP);
+            }
+            break;
+          case EffectKind::UnknownChanged:
+            KILL_CHECK;
+          }
+        }
+
+      } else if (auto *UBP = std::get_if<UpperBoundPredicate>(&check_C)) {
+        if (UBP->isIdentityCheck()) {
+          switch (Effect.kind) {
+          case EffectKind::Unchanged:
+          case EffectKind::Increment:
+          case EffectKind::Multiply:
+            S.addPredicate(*UBP);
+            break;
+          case EffectKind::Decrement:
+          case EffectKind::UnknownChanged:
+            KILL_CHECK;
+          }
+          break;
+        } else {
+          switch (Effect.kind) {
+          case EffectKind::Unchanged:
+            S.addPredicate(*UBP);
+            break;
+          case EffectKind::Increment:
+          case EffectKind::Multiply:
+            if (UBP->Index.increasesWhenVIncreases()) {
+              S.addPredicate(*UBP);
+            }
+            break;
+          case EffectKind::Decrement:
+            if (LBP->Index.increasesWhenVDecreases()) {
+              S.addPredicate(*UBP);
+            }
+            break;
+          case EffectKind::UnknownChanged:
+            KILL_CHECK;
+          }
+        }
+      }
+    }
+
+#undef KILL_CHECK
+    return S;
+  };
+
+  for (const Value *V : ValuesReferencedInSubscript) {
+    SmallVector<const BasicBlock *, 32> WorkList{};
+    SmallPtrSet<const BasicBlock *, 32> Visited{};
+    WorkList.push_back(&F.back());
+    while (!WorkList.empty()) {
+
+      const auto *BB = WorkList.pop_back_val();
+
+      C_IN[V][BB] =
+          BoundPredicateSet::Or({C_GEN[V][BB], backward(V, C_OUT[V][BB], BB)});
+
+      if (succ_begin(BB) != succ_end(BB)) {
+        // BoundCheckList successorPredicts = {};
+        // for (const auto *Succ : successors(BB)) {
+        //   for (auto &BCP : C_IN[Succ]) {
+        //     successorPredicts.push_back(BCP);
+        //   }
+        // }
+        // C_OUT[BB] = SimplifyAndIntersect(successorPredicts);
+        // for (const auto &P : C_GEN[BB]) {
+        //   const auto &Bound = P.UpperBound;
+        //   const auto &Subscript = P.Subscript;
+        //   const auto &E = EFFECT(BB, Subscript.i);
+        //   switch (E.kind) {
+        //   case EffectKind::Unchanged:
+        //     break;
+        //   case EffectKind::Increment:
+        //     break;
+        //   case EffectKind::Decrement:
+        //     break;
+        //   case EffectKind::Multiply:
+        //     break;
+        //   case EffectKind::UnknownChanged:
+        //     break;
+        //   }
+        // }
+      }
+      Visited.insert(BB);
+      for (const auto *Pred : predecessors(BB)) {
+        if (Visited.find(Pred) == Visited.end()) {
+          WorkList.push_back(Pred);
+        }
+      }
+    }
+  }
+}
+
+PreservedAnalyses BoundCheckOptimization::run(Function &F,
+                                              FunctionAnalysisManager &FAM) {
+  if (!isCProgram(F.getParent()) && isCxxSTLFunc(F.getName())) {
+    return PreservedAnalyses::all();
+  }
+  llvm::errs() << "BoundCheckOptimization\n";
+
+  CMap C_GEN{};
+  CMap C_IN{};
+  CMap C_OUT{};
+
+  EffectMap Effects{};
+  ValuePtrSet ValuesReferencedInSubscript = {};
+  // ValuePtrSet ValuesReferencedInBound = {};
+
+  ComputeEffects(F, C_GEN, Effects, ValuesReferencedInSubscript);
+
   InitializeToEmpty(F, C_IN, ValuesReferencedInSubscript);
   InitializeToEmpty(F, C_OUT, ValuesReferencedInSubscript);
+
+  BackwardAnalysis(F, C_IN, C_OUT, C_GEN, Effects, ValuesReferencedInSubscript);
 
   return PreservedAnalyses::none();
 }
