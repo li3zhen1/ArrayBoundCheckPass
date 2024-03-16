@@ -2,6 +2,7 @@
 #define BOUND_PREDICATE_H
 
 #include "SubscriptExpr.h"
+#include "CommonDef.h"
 // #include <variant>
 
 struct BoundPredicateIdentity {
@@ -41,6 +42,8 @@ struct BoundPredicateBase {
   void normalize();
 
   bool isNormalized() const;
+
+  bool isIdentityCheck() const;
 
   // void print(raw_ostream &O) const;
 };

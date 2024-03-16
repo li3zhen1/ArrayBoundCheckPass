@@ -18,16 +18,16 @@ void SubscriptExpr::mutatingMul(int64_t c) {
 }
 
 void SubscriptExpr::dump(raw_ostream &O) const {
-  O << "(";
+
   if (isConstant()) {
     O << B;
   } else {
     if (A != 1) {
       O << A << " * ";
     }
-    O << "(load ";
+    // O << "(load ";
     i->printAsOperand(O, false);
-    O << ")";
+    // O << ")";
     if (B != 0) {
       if (B < 0) {
         O << " - " << -B;
@@ -36,7 +36,6 @@ void SubscriptExpr::dump(raw_ostream &O) const {
       }
     }
   }
-  O << ")";
 }
 
 /**

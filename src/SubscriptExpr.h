@@ -72,6 +72,8 @@ struct SubscriptExpr {
 
   // SubscriptExpr operator*(const SubscriptExpr &Other, SubscriptExpr&
   // fallback) const;
+
+  static SubscriptExpr getZero() { return {0, nullptr, 0}; }
 };
 
 namespace std {

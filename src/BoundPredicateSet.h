@@ -5,17 +5,21 @@
 using namespace llvm;
 using namespace std;
 struct BoundPredicateSet {
-  
+
   SmallVector<LowerBoundPredicate> LbPredicates;
   SmallVector<UpperBoundPredicate> UbPredicates;
 
-  BoundPredicateSet() {};
+  BoundPredicateSet(){};
 
-  void addPredicate(const LowerBoundPredicate &P);
-  void addPredicate(const UpperBoundPredicate &P);
-  void addPredicate(const BoundPredicate &P);
-  
+  void addPredicate(LowerBoundPredicate &P);
+  void addPredicate(UpperBoundPredicate &P);
+  void addPredicate(LowerBoundPredicate &&P);
+  void addPredicate(UpperBoundPredicate &&P);
+  void addPredicate(BoundPredicate &P);
+
   SmallVector<BoundPredicate> getAllPredicates() const;
+
+  bool isIdentityCheck() const;
 
   static BoundPredicateSet
   Or(std::initializer_list<const BoundPredicateSet> Sets);
@@ -23,7 +27,10 @@ struct BoundPredicateSet {
   static BoundPredicateSet
   And(std::initializer_list<const BoundPredicateSet> Sets);
 
-  optional<BoundPredicateIdentity> getIdentity() const;
+  optional<SubscriptIndentity> getSubscriptIdentity() const;
 
   void print(raw_ostream &O) const;
+
+private:
+  BoundPredicate getFirstItem() const;
 };
