@@ -45,6 +45,8 @@ struct BoundPredicateBase {
 
   bool isIdentityCheck() const;
 
+  bool operator==(const BoundPredicateBase &Other) const;
+
   // void print(raw_ostream &O) const;
 };
 

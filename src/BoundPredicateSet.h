@@ -21,15 +21,15 @@ struct BoundPredicateSet {
 
   bool isIdentityCheck() const;
 
-  static BoundPredicateSet
-  Or(std::initializer_list<const BoundPredicateSet> Sets);
+  static BoundPredicateSet Or(SmallVector<BoundPredicateSet, 4> Sets);
 
-  static BoundPredicateSet
-  And(std::initializer_list<const BoundPredicateSet> Sets);
+  static BoundPredicateSet And(SmallVector<BoundPredicateSet, 4> Sets);
 
   optional<SubscriptIndentity> getSubscriptIdentity() const;
 
   void print(raw_ostream &O) const;
+
+  bool operator==(const BoundPredicateSet &Other) const;
 
 private:
   BoundPredicate getFirstItem() const;

@@ -1,4 +1,6 @@
 #include "BoundPredicateSet.h"
+#include "BoundPredicate.h"
+#include "SubscriptExpr.h"
 // #include <variant>
 
 void BoundPredicateSet::addPredicate(UpperBoundPredicate &P) {
@@ -76,21 +78,47 @@ optional<SubscriptIndentity> BoundPredicateSet::getSubscriptIdentity() const {
   return nullopt;
 }
 
+ LowerBoundPredicate * findFirstMergablePredicate(SmallVector<LowerBoundPredicate> &S,
+                                const SubscriptIndentity ID) {
+  const auto Ptr = llvm::find_if(
+      S, [&](const auto &It) { return It.Index.getIdentity() == ID; });
+
+  if (Ptr != S.end())
+    return Ptr;
+
+  return nullptr;
+}
+
+ UpperBoundPredicate * findFirstMergablePredicate(SmallVector<UpperBoundPredicate> &S,
+                                const SubscriptIndentity ID) {
+  const auto Ptr = llvm::find_if(
+      S, [&](const auto &It) { return It.Index.getIdentity() == ID; });
+
+  if (Ptr != S.end())
+    return Ptr;
+
+  return nullptr;
+}
+
 BoundPredicateSet
-BoundPredicateSet::Or(std::initializer_list<const BoundPredicateSet> Sets) {
+BoundPredicateSet::Or(SmallVector<BoundPredicateSet, 4> Sets) {
   BoundPredicateSet Result;
 
   for (const auto &S : Sets) {
     for (const auto &LP : S.LbPredicates) {
-      if (Result.LbPredicates.empty()) {
-        Result.LbPredicates.push_back(LP);
+      if (const auto _LP = findFirstMergablePredicate(Result.LbPredicates,
+                                                      LP.Index.getIdentity())) {
+        _LP->Bound.B = std::max(_LP->Bound.B, LP.Bound.B);
       } else {
+        Result.LbPredicates.push_back(LP);
       }
     }
-    for (const auto &It : S.UbPredicates) {
-      if (Result.UbPredicates.empty()) {
-        Result.UbPredicates.push_back(It);
+    for (const auto &UP : S.UbPredicates) {
+      if (const auto _UP = findFirstMergablePredicate(Result.UbPredicates,
+                                                      UP.Index.getIdentity())) {
+        _UP->Bound.B = std::min(_UP->Bound.B, UP.Bound.B);
       } else {
+        Result.UbPredicates.push_back(UP);
       }
     }
   }
@@ -98,19 +126,23 @@ BoundPredicateSet::Or(std::initializer_list<const BoundPredicateSet> Sets) {
 }
 
 BoundPredicateSet
-BoundPredicateSet::And(std::initializer_list<const BoundPredicateSet> Sets) {
+BoundPredicateSet::And(SmallVector<BoundPredicateSet, 4> Sets) {
   BoundPredicateSet Result;
   for (const auto &S : Sets) {
     for (const auto &LP : S.LbPredicates) {
-      if (Result.LbPredicates.empty()) {
-        Result.LbPredicates.push_back(LP);
+      if (const auto _LP = findFirstMergablePredicate(Result.LbPredicates,
+                                                      LP.Index.getIdentity())) {
+        _LP->Bound.B = std::min(_LP->Bound.B, LP.Bound.B);
       } else {
+        Result.LbPredicates.push_back(LP);
       }
     }
     for (const auto &It : S.UbPredicates) {
-      if (Result.UbPredicates.empty()) {
-        Result.UbPredicates.push_back(It);
+      if (const auto _UP = findFirstMergablePredicate(Result.UbPredicates,
+                                                      It.Index.getIdentity())) {
+        _UP->Bound.B = std::max(_UP->Bound.B, It.Bound.B);
       } else {
+        Result.UbPredicates.push_back(It);
       }
     }
   }
@@ -149,4 +181,23 @@ BoundPredicate BoundPredicateSet::getFirstItem() const {
     return UbPredicates.front();
   }
   llvm_unreachable("Empty BoundPredicateSet!");
+}
+
+
+bool BoundPredicateSet::operator==(const BoundPredicateSet &Other) const {
+  bool IsEqual = true;
+  if (LbPredicates.size() != Other.LbPredicates.size() ||
+      UbPredicates.size() != Other.UbPredicates.size()) {
+    return false;
+  }
+
+  for (const auto &It : LbPredicates) {
+    IsEqual &= llvm::find(Other.LbPredicates, It) != Other.LbPredicates.end();
+  }
+
+  for (const auto &It : UbPredicates) {
+    IsEqual &= llvm::find(Other.UbPredicates, It) != Other.UbPredicates.end();
+  }
+
+  return IsEqual;
 }

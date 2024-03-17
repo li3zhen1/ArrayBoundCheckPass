@@ -199,7 +199,7 @@ void BackwardAnalysis(Function &F, CMap &C_IN, CMap &C_OUT, CMap &C_GEN,
     BoundPredicateSet S{};
 
     const auto &Effect = EFFECT(B, V);
-    
+
     for (auto &check_C : C_OUT_B.getAllPredicates()) {
       if (auto *LBP = std::get_if<LowerBoundPredicate>(&check_C)) {
         if (LBP->isIdentityCheck()) {
@@ -275,49 +275,76 @@ void BackwardAnalysis(Function &F, CMap &C_IN, CMap &C_OUT, CMap &C_GEN,
   };
 
   for (const Value *V : ValuesReferencedInSubscript) {
-    SmallVector<const BasicBlock *, 32> WorkList{};
-    SmallPtrSet<const BasicBlock *, 32> Visited{};
-    WorkList.push_back(&F.back());
-    while (!WorkList.empty()) {
-
-      const auto *BB = WorkList.pop_back_val();
-
-      C_IN[V][BB] =
-          BoundPredicateSet::Or({C_GEN[V][BB], backward(V, C_OUT[V][BB], BB)});
-
-      if (succ_begin(BB) != succ_end(BB)) {
-        // BoundCheckList successorPredicts = {};
-        // for (const auto *Succ : successors(BB)) {
-        //   for (auto &BCP : C_IN[Succ]) {
-        //     successorPredicts.push_back(BCP);
-        //   }
-        // }
-        // C_OUT[BB] = SimplifyAndIntersect(successorPredicts);
-        // for (const auto &P : C_GEN[BB]) {
-        //   const auto &Bound = P.UpperBound;
-        //   const auto &Subscript = P.Subscript;
-        //   const auto &E = EFFECT(BB, Subscript.i);
-        //   switch (E.kind) {
-        //   case EffectKind::Unchanged:
-        //     break;
-        //   case EffectKind::Increment:
-        //     break;
-        //   case EffectKind::Decrement:
-        //     break;
-        //   case EffectKind::Multiply:
-        //     break;
-        //   case EffectKind::UnknownChanged:
-        //     break;
-        //   }
-        // }
+    bool stable = false;
+    int round = 0;
+    auto assignIfChanged = [&stable](auto &A, auto B) {
+      if (A != B) {
+        A = B;
+        stable = false;
       }
-      Visited.insert(BB);
-      for (const auto *Pred : predecessors(BB)) {
-        if (Visited.find(Pred) == Visited.end()) {
-          WorkList.push_back(Pred);
+    };
+    do {
+      stable = true;
+      round++;
+      VERBOSE_PRINT {
+        llvm::errs() << "Iterating over ";
+        V->printAsOperand(llvm::errs());
+        llvm::errs() << "\n";
+      }
+
+      SmallVector<const BasicBlock *, 32> WorkList{};
+      SmallPtrSet<const BasicBlock *, 32> Visited{};
+      WorkList.push_back(&F.back());
+
+      while (!WorkList.empty()) {
+
+        const auto *BB = WorkList.pop_back_val();
+
+        VERBOSE_PRINT {
+          BB->printAsOperand(BLUE(llvm::errs()));
+          llvm::errs() << "\n";
+        }
+
+        assignIfChanged(C_IN[V][BB],
+                        BoundPredicateSet::Or(
+                            {C_GEN[V][BB], backward(V, C_OUT[V][BB], BB)}));
+
+        VERBOSE_PRINT {
+          llvm::errs() << "\tC_IN\t";
+          C_IN[V][BB].print(llvm::errs());
+          llvm::errs() << "\n";
+        }
+
+        SmallVector<BoundPredicateSet, 4> successorPredicts = {};
+        if (succ_begin(BB) != succ_end(BB)) {
+          for (const auto *Succ : successors(BB)) {
+            VERBOSE_PRINT {
+              Succ->printAsOperand(YELLOW(llvm::errs()));
+              llvm::errs() << "\n";
+            }
+            successorPredicts.push_back(C_IN[V][Succ]);
+          }
+        }
+        VERBOSE_PRINT {
+          llvm::errs() << "Successor predicts: " << successorPredicts.size()
+                       << "\n";
+          for (const auto &SP : successorPredicts) {
+            SP.print(llvm::errs());
+          }
+        }
+        assignIfChanged(C_OUT[V][BB],
+                        BoundPredicateSet::And(successorPredicts));
+
+        Visited.insert(BB);
+        for (const auto *Pred : predecessors(BB)) {
+          if (Visited.find(Pred) == Visited.end()) {
+            WorkList.push_back(Pred);
+          }
         }
       }
-    }
+    } while (!stable);
+
+    llvm::errs() << "Stable after " << round << " rounds\n";
   }
 }
 
@@ -342,6 +369,15 @@ PreservedAnalyses BoundCheckOptimization::run(Function &F,
   InitializeToEmpty(F, C_OUT, ValuesReferencedInSubscript);
 
   BackwardAnalysis(F, C_IN, C_OUT, C_GEN, Effects, ValuesReferencedInSubscript);
+
+  VERBOSE_PRINT {
+    llvm::errs() << "===================== C_GEN ===================== \n";
+    print(C_GEN, llvm::errs());
+    llvm::errs() << "===================== C_IN ===================== \n";
+    print(C_IN, llvm::errs());
+    llvm::errs() << "===================== C_OUT ===================== \n";
+    print(C_OUT, llvm::errs());
+  }
 
   return PreservedAnalyses::none();
 }

@@ -129,7 +129,7 @@ int64_t SubscriptExpr::getConstant() const {
   return B;
 }
 
-bool SubscriptExpr::operator==(const SubscriptExpr &Other) {
+bool SubscriptExpr::operator==(const SubscriptExpr &Other) const {
   return A == Other.A && i == Other.i && B == Other.B;
 }
 

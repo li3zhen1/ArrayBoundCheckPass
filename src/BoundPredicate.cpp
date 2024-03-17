@@ -33,3 +33,8 @@ void UpperBoundPredicate::print(raw_ostream &O) const {
   O << " ≤ ";
   Bound.dump(GreenO);
 }
+
+
+bool BoundPredicateBase::operator==(const BoundPredicateBase &Other) const {
+  return Bound == Other.Bound && Index == Other.Index;
+}

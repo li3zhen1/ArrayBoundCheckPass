@@ -46,7 +46,7 @@ struct SubscriptExpr {
 
   int64_t getConstant() const;
 
-  bool operator==(const SubscriptExpr &Other);
+  bool operator==(const SubscriptExpr &Other) const;
 
   SubscriptExpr operator+(const SubscriptExpr &Other) const;
 

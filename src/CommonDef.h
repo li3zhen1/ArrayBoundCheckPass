@@ -18,6 +18,10 @@ constexpr uint64_t UNKNOWN = 0;
 #define RedO llvm::WithColor(O).changeColor(raw_ostream::RED, true, false)
 #define GreenO llvm::WithColor(O).changeColor(raw_ostream::GREEN, true, false)
 
+#define BLUE(O) llvm::WithColor(O).changeColor(raw_ostream::BLUE, true, false)
+#define YELLOW(O) llvm::WithColor(O).changeColor(raw_ostream::YELLOW, true, false)
+
+
 // #undef _DEBUG_PRINT
 
 enum ArrayCategory : unsigned {
