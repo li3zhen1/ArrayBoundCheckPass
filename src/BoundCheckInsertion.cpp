@@ -14,6 +14,7 @@ PreservedAnalyses BoundCheckInsertion::run(Function &F,
   Instruction *InsertPoint = F.getEntryBlock().getFirstNonPHI();
   IRBuilder<> IRB(InsertPoint);
   AttributeList Attr;
+  
   FunctionCallee Check = F.getParent()->getOrInsertFunction(
       "checkBound", Attr, IRB.getVoidTy(), IRB.getInt64Ty(), IRB.getInt64Ty(),
       IRB.getPtrTy(), IRB.getInt64Ty());

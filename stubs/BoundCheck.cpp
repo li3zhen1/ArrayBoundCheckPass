@@ -13,7 +13,7 @@ extern "C" {
  * @param line debug information, is not reported if line <= 0
  */
 void checkBound(int bound, int subscript, const char *file, int line) {
-  std::cerr << subscript << "/" << bound << std::endl;
+  std::cerr << "0≤"  << subscript << "<" << bound << std::endl;
   if (subscript < 0 || subscript >= bound) {
     std::cerr << "Array out of bound at " << file;
     if (line > 0) {
@@ -25,18 +25,25 @@ void checkBound(int bound, int subscript, const char *file, int line) {
   }
 }
 
-void assertLessOrEqual(int lhs, int rhs, const char *file, int line) {
-  std::cerr << lhs << "≤" << rhs << std::endl;
-  if (lhs > rhs) {
+void checkLowerBound(int bound, int subscript, const char *file, int line) {
+  std::cerr << "lb " << bound << "≤" << subscript << std::endl;
+  if (subscript < bound) {
     std::cerr << "Assertion failed at " << file;
     if (line > 0) {
       std::cerr << "#" << line;
     }
-    std::cerr << " with " << lhs << " > " << rhs << std::endl;
   }
 }
 
-
+void checkUpperBound(int bound, int subscript, const char *file, int line) {
+  std::cerr << "ub " << subscript << "≤" << bound << std::endl;
+  if (subscript > bound) {
+    std::cerr << "Assertion failed at " << file;
+    if (line > 0) {
+      std::cerr << "#" << line;
+    }
+  }
+}
 
 #ifdef __cplusplus
 }

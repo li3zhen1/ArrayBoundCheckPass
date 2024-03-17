@@ -365,6 +365,91 @@ void RunModificationAnalysis(Function &F, CMap &C_IN, CMap &C_OUT, CMap &C_GEN,
   }
 }
 
+void ApplyModification(Function &F, CMap &Grouped_C_OUT,
+                       ValuePtrVector &ValuesReferencedInSubscript) {
+
+  LLVMContext &Context = F.getContext();
+  Instruction *InsertPoint = F.getEntryBlock().getFirstNonPHI();
+  IRBuilder<> IRB(InsertPoint);
+  AttributeList Attr;
+  FunctionCallee CheckLower = F.getParent()->getOrInsertFunction(
+      "checkLowerBound", Attr, IRB.getVoidTy(), IRB.getInt64Ty(),
+      IRB.getInt64Ty(), IRB.getPtrTy(), IRB.getInt64Ty());
+
+  FunctionCallee CheckUpper = F.getParent()->getOrInsertFunction(
+      "checkUpperBound", Attr, IRB.getVoidTy(), IRB.getInt64Ty(),
+      IRB.getInt64Ty(), IRB.getPtrTy(), IRB.getInt64Ty());
+
+  // TODO: cache the file name
+  const auto file =
+      IRB.CreateGlobalStringPtr(F.getParent()->getSourceFileName());
+
+  auto createValueForSubExpr = [&](Instruction *point,
+                                   const SubscriptExpr &SE) -> Value * {
+    IRB.SetInsertPoint(point);
+    if (SE.isConstant()) {
+      return IRB.getInt64(SE.B);
+    } else if (SE.A == 1 && SE.B == 0) {
+      return IRB.CreateLoad(SE.i->getType(), (Value *)SE.i);
+    } else {
+      Value *V = IRB.CreateLoad(SE.i->getType(), (Value *)SE.i);
+      if (SE.A != 1) {
+        V = IRB.CreateMul(V, IRB.getInt64(SE.A));
+      }
+      if (SE.B != 0) {
+        V = IRB.CreateAdd(V, IRB.getInt64(SE.B));
+      }
+      return V;
+    }
+  };
+
+  auto createCheckCall = [&](Instruction *point, Value *bound, Value *subscript,
+                             FunctionCallee Check) {
+    Value *ln;
+    if (const auto Loc = point->getDebugLoc()) {
+      ln = IRB.getInt64(Loc.getLine());
+    } else {
+      ln = IRB.getInt64(0);
+    }
+    IRB.SetInsertPoint(point);
+    IRB.CreateCall(Check, {bound, subscript, file, ln});
+  };
+
+  for (const auto *V : ValuesReferencedInSubscript) {
+    auto &&C_OUT = Grouped_C_OUT[V];
+    for (auto &BB : F) {
+      if (C_OUT[&BB].isEmpty()) {
+        continue;
+      }
+      for (Instruction &Inst : BB) {
+        if (isa<CallInst>(Inst)) {
+          auto CB = cast<CallInst>(&Inst);
+          auto F = CB->getCalledFunction();
+          if (F->getName() == "checkBound") {
+
+            Value *checked = CB->getArgOperand(1);
+
+            const SubscriptExpr SubExpr = SubscriptExpr::evaluate(checked);
+
+            if (SubExpr.i == V) {
+              // Inst.eraseFromParent();
+              for (auto &LBP : C_OUT[&BB].LbPredicates) {
+                Value *tempBound = createValueForSubExpr(&Inst, LBP.Bound);
+                createCheckCall(&Inst, tempBound, checked, CheckLower);
+              }
+              for (auto &UBP : C_OUT[&BB].UbPredicates) {
+                Value *tempBound = createValueForSubExpr(&Inst, UBP.Bound);
+                createCheckCall(&Inst, tempBound, checked, CheckUpper);
+              }
+              // Inst.eraseFromParent();
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
 PreservedAnalyses BoundCheckOptimization::run(Function &F,
                                               FunctionAnalysisManager &FAM) {
   if (!isCProgram(F.getParent()) && isCxxSTLFunc(F.getName())) {
@@ -405,13 +490,14 @@ PreservedAnalyses BoundCheckOptimization::run(Function &F,
                           ValuesReferencedInSubscript);
 
   VERBOSE_PRINT {
-
     BLUE(llvm::errs())
         << "===================== C_OUT ===================== \n";
     print(C_OUT, (llvm::errs()), ValuesReferencedInSubscript);
   }
 
   // F.viewCFGOnly();
+
+  ApplyModification(F, C_OUT, ValuesReferencedInSubscript);
 
   return PreservedAnalyses::none();
 }
