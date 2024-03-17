@@ -4,6 +4,7 @@
 #include "CommonDef.h"
 #include "Effect.h"
 #include "SubscriptExpr.h"
+#include <cstddef>
 
 using namespace llvm;
 
@@ -411,8 +412,10 @@ void ApplyModification(Function &F, CMap &Grouped_C_OUT,
     } else {
       ln = IRB.getInt64(0);
     }
-    IRB.SetInsertPoint(point);
-    IRB.CreateCall(Check, {bound, subscript, file, ln});
+    IRB.SetInsertPoint(point->getNextNode());
+
+    auto CI = IRB.CreateCall(Check, {bound, subscript, file, ln});
+    return CI;
   };
 
   for (const auto *V : ValuesReferencedInSubscript) {
@@ -421,30 +424,36 @@ void ApplyModification(Function &F, CMap &Grouped_C_OUT,
       if (C_OUT[&BB].isEmpty()) {
         continue;
       }
-      for (Instruction &Inst : BB) {
+      SmallVector<Instruction *> CI = {};
+      Instruction *point = nullptr;
+      for (auto &Inst : BB.getInstList()) {
         if (isa<CallInst>(Inst)) {
           auto CB = cast<CallInst>(&Inst);
           auto F = CB->getCalledFunction();
-          if (F->getName() == "checkBound") {
 
+          if (F->getName() == "checkBound") {
             Value *checked = CB->getArgOperand(1);
 
             const SubscriptExpr SubExpr = SubscriptExpr::evaluate(checked);
 
             if (SubExpr.i == V) {
-              // Inst.eraseFromParent();
-              for (auto &LBP : C_OUT[&BB].LbPredicates) {
-                Value *tempBound = createValueForSubExpr(&Inst, LBP.Bound);
-                createCheckCall(&Inst, tempBound, checked, CheckLower);
-              }
+              CI.push_back(&Inst);
+
               for (auto &UBP : C_OUT[&BB].UbPredicates) {
                 Value *tempBound = createValueForSubExpr(&Inst, UBP.Bound);
                 createCheckCall(&Inst, tempBound, checked, CheckUpper);
               }
-              // Inst.eraseFromParent();
+
+              for (auto &LBP : C_OUT[&BB].LbPredicates) {
+                Value *tempBound = createValueForSubExpr(&Inst, LBP.Bound);
+                createCheckCall(&Inst, tempBound, checked, CheckLower);
+              }
             }
           }
         }
+      }
+      for (auto *CI : CI) {
+        CI->eraseFromParent();
       }
     }
   }
