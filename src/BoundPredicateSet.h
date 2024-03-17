@@ -29,7 +29,9 @@ struct BoundPredicateSet {
 
   void print(raw_ostream &O) const;
 
-  bool operator==(const BoundPredicateSet &Other) const;
+  bool operator==(const BoundPredicateSet &Other) const;\
+
+  bool isEmpty() const;
 
 private:
   BoundPredicate getFirstItem() const;

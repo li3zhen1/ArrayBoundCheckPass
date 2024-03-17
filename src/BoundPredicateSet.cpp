@@ -201,3 +201,8 @@ bool BoundPredicateSet::operator==(const BoundPredicateSet &Other) const {
 
   return IsEqual;
 }
+
+
+bool BoundPredicateSet::isEmpty() const {
+  return LbPredicates.empty() && UbPredicates.empty();
+}

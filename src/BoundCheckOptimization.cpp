@@ -10,26 +10,43 @@ using namespace llvm;
 using BoundCheckSetList = SmallVector<BoundPredicateSet>;
 
 using CMap =
-    SmallDenseMap<const Value *,
-                  SmallDenseMap<const BasicBlock *, BoundPredicateSet>>;
+    DenseMap<const Value *, DenseMap<const BasicBlock *, BoundPredicateSet>>;
 
-using ValuePtrSet = SmallPtrSet<const Value *, 32>;
+using ValuePtrVector = SmallVector<const Value *, 32>;
+
 using EffectMap =
     DenseMap<const Value *,
              DenseMap<const BasicBlock *, SmallVector<SubscriptExpr>>>;
 
-void print(CMap &C, raw_ostream &O) {
-  for (const auto &It : C) {
+void print(CMap &C, raw_ostream &O, const ValuePtrVector &ValueKeys) {
+
+  for (const auto *V : ValueKeys) {
     O << "----------------- Value: ";
-    It.first->printAsOperand(O);
+    V->printAsOperand(O);
     O << "----------------- \n";
-    for (const auto &BB : It.second) {
-      BB.first->printAsOperand(O);
+    for (const auto &BB2SE : C[V]) {
+      BB2SE.first->printAsOperand(O);
       O << "\n";
-      BB.second.print(O);
+      if (!BB2SE.second.isEmpty()) {
+        BB2SE.second.print(O);
+      }
     }
     O << "\n";
   }
+
+  // for (auto &[V, BB2SE] : C) {
+  //   O << "----------------- Value: ";
+  //   V->printAsOperand(O);
+  //   O << "----------------- \n";
+  //   for (auto &[BB, SE] : BB2SE) {
+  //     BB->printAsOperand(O);
+  //     O << "\n";
+  //     if (!SE.isEmpty()) {
+  //       SE.print(O);
+  //     }
+  //   }
+  //   O << "\n";
+  // }
 }
 
 inline auto FindMergableCheckSet(BoundCheckSetList &BCSL,
@@ -47,8 +64,9 @@ inline auto FindMergableCheckSet(BoundCheckSetList &BCSL,
   return nullptr;
 }
 
-void InitializeToEmpty(Function &F, CMap &C, const ValuePtrSet &ValueKeys) {
+void InitializeToEmpty(Function &F, CMap &C, const ValuePtrVector &ValueKeys) {
   for (const auto *V : ValueKeys) {
+    C[V] = DenseMap<const BasicBlock *, BoundPredicateSet>{};
     for (const auto &BB : F) {
       C[V][&BB] = {};
     }
@@ -56,7 +74,7 @@ void InitializeToEmpty(Function &F, CMap &C, const ValuePtrSet &ValueKeys) {
 }
 
 void ComputeEffects(Function &F, CMap &Grouped_C_GEN, EffectMap &effects,
-                    ValuePtrSet &ValuesReferencedInBoundCheck) {
+                    ValuePtrVector &ValuesReferencedInBoundCheck) {
 
   SmallDenseMap<const BasicBlock *, BoundPredicateSet> C_GEN{};
 
@@ -74,7 +92,9 @@ void ComputeEffects(Function &F, CMap &Grouped_C_GEN, EffectMap &effects,
           const SubscriptExpr SubExpr = SubscriptExpr::evaluate(checked);
 
           if (!SubExpr.isConstant()) {
-            ValuesReferencedInBoundCheck.insert(SubExpr.i);
+            if (llvm::is_contained(ValuesReferencedInBoundCheck, SubExpr.i) ==
+                false)
+              ValuesReferencedInBoundCheck.push_back(SubExpr.i);
           }
           // BoundPredicateSet BCS;
 
@@ -151,23 +171,21 @@ void ComputeEffects(Function &F, CMap &Grouped_C_GEN, EffectMap &effects,
   }
 
   InitializeToEmpty(F, Grouped_C_GEN, ValuesReferencedInBoundCheck);
-  for (const auto &CG : C_GEN) {
-    // for (const auto &BCP : CG.second) {
-    Grouped_C_GEN[CG.second.getSubscriptIdentity()->second][CG.first] =
-        CG.second;
-    // }
+
+  for (const auto &[B, CG] : C_GEN) {
+    Grouped_C_GEN[CG.getSubscriptIdentity()->second][B] = CG;
   }
 
   VERBOSE_PRINT {
     llvm::errs()
         << "===================== Grouped C_GEN ===================== \n";
-    print(Grouped_C_GEN, llvm::errs());
+    print(Grouped_C_GEN, (llvm::errs()), ValuesReferencedInBoundCheck);
   }
 }
 
-void BackwardAnalysis(Function &F, CMap &C_IN, CMap &C_OUT, CMap &C_GEN,
-                      EffectMap &Effects,
-                      ValuePtrSet &ValuesReferencedInSubscript) {
+void RunModificationAnalysis(Function &F, CMap &C_IN, CMap &C_OUT, CMap &C_GEN,
+                             EffectMap &Effects,
+                             ValuePtrVector &ValuesReferencedInSubscript) {
 
   auto EFFECT = [&](const BasicBlock *B, const Value *V) -> EffectOnSubscript {
     const auto &SE = Effects[V][B];
@@ -200,47 +218,46 @@ void BackwardAnalysis(Function &F, CMap &C_IN, CMap &C_OUT, CMap &C_GEN,
 
     const auto &Effect = EFFECT(B, V);
 
-    for (auto &check_C : C_OUT_B.getAllPredicates()) {
-      if (auto *LBP = std::get_if<LowerBoundPredicate>(&check_C)) {
-        if (LBP->isIdentityCheck()) {
-          switch (Effect.kind) {
-          case EffectKind::Unchanged:
-          case EffectKind::Decrement:
-            S.addPredicate(*LBP);
-            break;
-          case EffectKind::Increment:
-          case EffectKind::Multiply:
-          case EffectKind::UnknownChanged:
-            KILL_CHECK;
-          }
+    for (auto &LBP : C_OUT_B.LbPredicates) {
+      if (LBP.isIdentityCheck()) {
+        switch (Effect.kind) {
+        case EffectKind::Unchanged:
+        case EffectKind::Decrement:
+          S.addPredicate(LBP);
           break;
-        } else {
-          switch (Effect.kind) {
-          case EffectKind::Unchanged:
-            S.addPredicate(*LBP);
-          case EffectKind::Increment:
-          case EffectKind::Multiply:
-            if (LBP->Index.decreasesWhenVIncreases()) {
-              S.addPredicate(*LBP);
-            }
-            break;
-          case EffectKind::Decrement:
-            if (LBP->Index.decreasesWhenVDecreases()) {
-              S.addPredicate(*LBP);
-            }
-            break;
-          case EffectKind::UnknownChanged:
-            KILL_CHECK;
-          }
+        case EffectKind::Increment:
+        case EffectKind::Multiply:
+        case EffectKind::UnknownChanged:
+          KILL_CHECK;
         }
+        break;
+      } else {
+        switch (Effect.kind) {
+        case EffectKind::Unchanged:
+          S.addPredicate(LBP);
+        case EffectKind::Increment:
+        case EffectKind::Multiply:
+          if (LBP.Index.decreasesWhenVIncreases()) {
+            S.addPredicate(LBP);
+          }
+          break;
+        case EffectKind::Decrement:
+          if (LBP.Index.decreasesWhenVDecreases()) {
+            S.addPredicate(LBP);
+          }
+          break;
+        case EffectKind::UnknownChanged:
+          KILL_CHECK;
+        }
+      }
 
-      } else if (auto *UBP = std::get_if<UpperBoundPredicate>(&check_C)) {
-        if (UBP->isIdentityCheck()) {
+      for (auto &UBP : C_OUT_B.UbPredicates) {
+        if (UBP.isIdentityCheck()) {
           switch (Effect.kind) {
           case EffectKind::Unchanged:
           case EffectKind::Increment:
           case EffectKind::Multiply:
-            S.addPredicate(*UBP);
+            S.addPredicate(UBP);
             break;
           case EffectKind::Decrement:
           case EffectKind::UnknownChanged:
@@ -250,17 +267,17 @@ void BackwardAnalysis(Function &F, CMap &C_IN, CMap &C_OUT, CMap &C_GEN,
         } else {
           switch (Effect.kind) {
           case EffectKind::Unchanged:
-            S.addPredicate(*UBP);
+            S.addPredicate(UBP);
             break;
           case EffectKind::Increment:
           case EffectKind::Multiply:
-            if (UBP->Index.increasesWhenVIncreases()) {
-              S.addPredicate(*UBP);
+            if (UBP.Index.increasesWhenVIncreases()) {
+              S.addPredicate(UBP);
             }
             break;
           case EffectKind::Decrement:
-            if (LBP->Index.increasesWhenVDecreases()) {
-              S.addPredicate(*UBP);
+            if (LBP.Index.increasesWhenVDecreases()) {
+              S.addPredicate(UBP);
             }
             break;
           case EffectKind::UnknownChanged:
@@ -273,7 +290,7 @@ void BackwardAnalysis(Function &F, CMap &C_IN, CMap &C_OUT, CMap &C_GEN,
 #undef KILL_CHECK
     return S;
   };
-
+#define ONFLIGHT_PRINT if (false)
   for (const Value *V : ValuesReferencedInSubscript) {
     bool stable = false;
     int round = 0;
@@ -286,7 +303,7 @@ void BackwardAnalysis(Function &F, CMap &C_IN, CMap &C_OUT, CMap &C_GEN,
     do {
       stable = true;
       round++;
-      VERBOSE_PRINT {
+      ONFLIGHT_PRINT {
         llvm::errs() << "Iterating over ";
         V->printAsOperand(llvm::errs());
         llvm::errs() << "\n";
@@ -300,7 +317,7 @@ void BackwardAnalysis(Function &F, CMap &C_IN, CMap &C_OUT, CMap &C_GEN,
 
         const auto *BB = WorkList.pop_back_val();
 
-        VERBOSE_PRINT {
+        ONFLIGHT_PRINT {
           BB->printAsOperand(BLUE(llvm::errs()));
           llvm::errs() << "\n";
         }
@@ -309,7 +326,7 @@ void BackwardAnalysis(Function &F, CMap &C_IN, CMap &C_OUT, CMap &C_GEN,
                         BoundPredicateSet::Or(
                             {C_GEN[V][BB], backward(V, C_OUT[V][BB], BB)}));
 
-        VERBOSE_PRINT {
+        ONFLIGHT_PRINT {
           llvm::errs() << "\tC_IN\t";
           C_IN[V][BB].print(llvm::errs());
           llvm::errs() << "\n";
@@ -318,14 +335,14 @@ void BackwardAnalysis(Function &F, CMap &C_IN, CMap &C_OUT, CMap &C_GEN,
         SmallVector<BoundPredicateSet, 4> successorPredicts = {};
         if (succ_begin(BB) != succ_end(BB)) {
           for (const auto *Succ : successors(BB)) {
-            VERBOSE_PRINT {
+            ONFLIGHT_PRINT {
               Succ->printAsOperand(YELLOW(llvm::errs()));
               llvm::errs() << "\n";
             }
             successorPredicts.push_back(C_IN[V][Succ]);
           }
         }
-        VERBOSE_PRINT {
+        ONFLIGHT_PRINT {
           llvm::errs() << "Successor predicts: " << successorPredicts.size()
                        << "\n";
           for (const auto &SP : successorPredicts) {
@@ -356,28 +373,45 @@ PreservedAnalyses BoundCheckOptimization::run(Function &F,
   llvm::errs() << "BoundCheckOptimization\n";
 
   CMap C_GEN{};
-  CMap C_IN{};
-  CMap C_OUT{};
 
   EffectMap Effects{};
-  ValuePtrSet ValuesReferencedInSubscript = {};
-  // ValuePtrSet ValuesReferencedInBound = {};
+  ValuePtrVector ValuesReferencedInSubscript = {};
 
   ComputeEffects(F, C_GEN, Effects, ValuesReferencedInSubscript);
 
+  VERBOSE_PRINT {
+    BLUE(llvm::errs())
+        << "===================== Effects ===================== \n";
+    for (const auto &[V, BB2SE] : Effects) {
+      V->printAsOperand(llvm::errs());
+      llvm::errs() << "\n";
+      for (const auto &[BB, SE] : BB2SE) {
+        BB->printAsOperand(llvm::errs());
+        llvm::errs() << "\n";
+        for (const auto &E : SE) {
+          E.dump(llvm::errs());
+        }
+      }
+      llvm::errs() << "\n";
+    }
+  }
+
+  CMap C_IN{};
+  CMap C_OUT{};
   InitializeToEmpty(F, C_IN, ValuesReferencedInSubscript);
   InitializeToEmpty(F, C_OUT, ValuesReferencedInSubscript);
 
-  BackwardAnalysis(F, C_IN, C_OUT, C_GEN, Effects, ValuesReferencedInSubscript);
+  RunModificationAnalysis(F, C_IN, C_OUT, C_GEN, Effects,
+                          ValuesReferencedInSubscript);
 
   VERBOSE_PRINT {
-    llvm::errs() << "===================== C_GEN ===================== \n";
-    print(C_GEN, llvm::errs());
-    llvm::errs() << "===================== C_IN ===================== \n";
-    print(C_IN, llvm::errs());
-    llvm::errs() << "===================== C_OUT ===================== \n";
-    print(C_OUT, llvm::errs());
+
+    BLUE(llvm::errs())
+        << "===================== C_OUT ===================== \n";
+    print(C_OUT, (llvm::errs()), ValuesReferencedInSubscript);
   }
+
+  // F.viewCFGOnly();
 
   return PreservedAnalyses::none();
 }
