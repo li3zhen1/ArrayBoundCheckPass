@@ -3,8 +3,6 @@
 
 using namespace llvm;
 
-
-
 PreservedAnalyses BoundCheckInsertion::run(Function &F,
                                            FunctionAnalysisManager &FAM) {
   if (!isCProgram(F.getParent()) && isCxxSTLFunc(F.getName())) {
@@ -14,26 +12,33 @@ PreservedAnalyses BoundCheckInsertion::run(Function &F,
   Instruction *InsertPoint = F.getEntryBlock().getFirstNonPHI();
   IRBuilder<> IRB(InsertPoint);
   AttributeList Attr;
-  
+
   FunctionCallee Check = F.getParent()->getOrInsertFunction(
       "checkBound", Attr, IRB.getVoidTy(), IRB.getInt64Ty(), IRB.getInt64Ty(),
       IRB.getPtrTy(), IRB.getInt64Ty());
 
+  FunctionCallee CheckLower = F.getParent()->getOrInsertFunction(
+      "checkLowerBound", Attr, IRB.getVoidTy(), IRB.getInt64Ty(), IRB.getInt64Ty(),
+      IRB.getPtrTy(), IRB.getInt64Ty());
+  FunctionCallee CheckUpper = F.getParent()->getOrInsertFunction(
+      "checkUpperBound", Attr, IRB.getVoidTy(), IRB.getInt64Ty(), IRB.getInt64Ty(),
+      IRB.getPtrTy(), IRB.getInt64Ty());
+
   // TODO: cache the file name
-  const auto file =
-      IRB.CreateGlobalStringPtr(F.getParent()->getSourceFileName());
+  const auto file = IRB.CreateGlobalStringPtr(F.getParent()->getSourceFileName());
 
-
-  auto createCheckBoundCall = [&](Instruction *point, Value* arraySize,
+  auto createCheckBoundCall = [&](Instruction *point, Value *arraySize,
                                   Value *subscript) {
-    Value* ln;
+    Value *ln;
     if (const auto Loc = point->getDebugLoc()) {
       ln = IRB.getInt64(Loc.getLine());
     } else {
       ln = IRB.getInt64(0);
     }
     IRB.SetInsertPoint(point);
-    IRB.CreateCall(Check, {arraySize, subscript, file, ln});
+    Value* inclusiveBound = IRB.CreateSub(arraySize, IRB.getInt64(1));
+    IRB.CreateCall(CheckUpper, {inclusiveBound, subscript, file, ln});
+    IRB.CreateCall(CheckLower, {IRB.getInt64(0), subscript, file, ln});
   };
 
   for (auto &BB : F) {
@@ -58,19 +63,19 @@ PreservedAnalyses BoundCheckInsertion::run(Function &F,
         } else if (GEP->getSourceElementType()->isIntegerTy()) {
           subscript = GEP->getOperand(1);
         } else {
-          
+
           // GEP->print(errs());
           subscript = GEP->getOperand(1);
           // throw std::runtime_error("Unknown GEP type.");
         }
-        
-        createCheckBoundCall(&I, Bound, subscript);
 
+        createCheckBoundCall(&I, Bound, subscript);
 
         // FIXME: Not used
         // Value* mallocSizeIfExist = nullptr;
         // if (MN->getNumOperands() > 2) {
-        //   // When the array type is "dynamic array", the metadata also provide a
+        //   // When the array type is "dynamic array", the metadata also
+        //   provide a
         //   // reference to the associated malloc invocation
         //   CallBase *Allocator = cast<CallBase>(
         //       cast<ValueAsMetadata>(MN->getOperand(2).get())->getValue());
@@ -81,8 +86,9 @@ PreservedAnalyses BoundCheckInsertion::run(Function &F,
         // if (const auto *CI = dyn_cast<ConstantInt>(Bound)) {
         //   // dynamic / static
         //   // const auto arraySize = CI->getValue();
-        //   // const auto arraySizeValue = ConstantInt::get(IRB.getInt64Ty(), arraySize.getZExtValue());
-        //   createCheckBoundCall(&I, Bound, subscript);
+        //   // const auto arraySizeValue = ConstantInt::get(IRB.getInt64Ty(),
+        //   arraySize.getZExtValue()); createCheckBoundCall(&I, Bound,
+        //   subscript);
 
         // } else if (const auto *Inst = dyn_cast<Instruction>(Bound)) {
         //   // dynamic array

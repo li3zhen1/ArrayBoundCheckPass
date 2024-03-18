@@ -61,9 +61,49 @@ void InitializeToEmpty(Function &F, CMap &C, const ValuePtrVector &ValueKeys) {
   }
 }
 
+Value *createValueForSubExpr(IRBuilder<> &IRB, Instruction *point,
+                             const SubscriptExpr &SE) {
+  IRB.SetInsertPoint(point);
+  if (SE.isConstant()) {
+    return IRB.getInt64(SE.B);
+  } else if (SE.A == 1 && SE.B == 0) {
+    Value *V = (Value *)SE.i;
+    // if (isa<AllocaInst>(SE.i)) {
+    //   auto *AI = cast<AllocaInst>(SE.i);
+    //   if (!AI->getAllocatedType()->isIntegerTy(64)) {
+    //     V = IRB.CreateSExt(V, IRB.getInt64Ty());
+    //   }
+    // }
+    return IRB.CreateLoad(IRB.getInt64Ty(), V);
+  } else {
+    Value *V = IRB.CreateLoad(IRB.getInt64Ty(), (Value *)SE.i);
+    if (SE.A != 1) {
+      V = IRB.CreateMul(V, IRB.getInt64(SE.A));
+    }
+    if (SE.B != 0) {
+      V = IRB.CreateAdd(V, IRB.getInt64(SE.B));
+    }
+    return V;
+  }
+};
+
+CallInst *createCheckCall(IRBuilder<> &IRB, Instruction *afterPoint,
+                          FunctionCallee Check, Value *bound, Value *subscript,
+                          Constant *file) {
+  Value *ln;
+  if (const auto Loc = afterPoint->getDebugLoc()) {
+    ln = IRB.getInt64(Loc.getLine());
+  } else {
+    ln = IRB.getInt64(0);
+  }
+  IRB.SetInsertPoint(afterPoint->getNextNode());
+
+  return IRB.CreateCall(Check, {bound, subscript, file, ln});
+};
+
 void ComputeEffects(Function &F, CMap &Grouped_C_GEN, EffectMap &effects,
                     ValuePtrVector &ValuesReferencedInBoundCheck,
-                    ValueEvaluationCache &Evaluated) {
+                    ValueEvaluationCache &Evaluated, Constant *file) {
 
   SmallDenseMap<const BasicBlock *, BoundPredicateSet> C_GEN{};
 
@@ -73,25 +113,32 @@ void ComputeEffects(Function &F, CMap &Grouped_C_GEN, EffectMap &effects,
       if (isa<CallInst>(Inst)) {
         const auto CB = cast<CallInst>(&Inst);
         const auto F = CB->getCalledFunction();
-        if (F->getName() == "checkBound") {
-          const Value *bound = CB->getArgOperand(0);
-          const Value *checked = CB->getArgOperand(1);
 
-          const SubscriptExpr BoundExpr = SubscriptExpr::evaluate(bound);
-          const SubscriptExpr SubExpr = SubscriptExpr::evaluate(checked);
+        if (F->getName() != "checkLowerBound" &&
+            F->getName() != "checkUpperBound")
+          continue;
 
-          Evaluated[bound] = BoundExpr;
-          Evaluated[checked] = SubExpr;
+        const Value *bound = CB->getArgOperand(0);
+        const Value *checked = CB->getArgOperand(1);
 
-          if (!SubExpr.isConstant()) {
-            if (llvm::is_contained(ValuesReferencedInBoundCheck, SubExpr.i) ==
-                false)
-              ValuesReferencedInBoundCheck.push_back(SubExpr.i);
-          }
+        const SubscriptExpr BoundExpr = SubscriptExpr::evaluate(bound);
+        const SubscriptExpr SubExpr = SubscriptExpr::evaluate(checked);
 
-          predicts.addPredicate(UpperBoundPredicate{BoundExpr - 1, SubExpr});
-          predicts.addPredicate(
-              LowerBoundPredicate{SubscriptExpr::getZero(), SubExpr});
+        Evaluated[bound] = BoundExpr;
+        Evaluated[checked] = SubExpr;
+
+        if (!SubExpr.isConstant()) {
+          if (llvm::is_contained(ValuesReferencedInBoundCheck, SubExpr.i) ==
+              false)
+            ValuesReferencedInBoundCheck.push_back(SubExpr.i);
+        }
+
+        if (F->getName() == "checkUpperBound") {
+          auto UBP = UpperBoundPredicate{BoundExpr, SubExpr};
+          predicts.addPredicate(UBP);
+        } else if (F->getName() == "checkLowerBound") {
+          auto UBP = LowerBoundPredicate{BoundExpr, SubExpr};
+          predicts.addPredicate(UBP);
         }
       }
     }
@@ -370,7 +417,7 @@ void RunModificationAnalysis(Function &F, CMap &C_IN, CMap &C_OUT, CMap &C_GEN,
 
 void ApplyModification(Function &F, CMap &Grouped_C_OUT, CMap &C_GEN,
                        ValuePtrVector &ValuesReferencedInSubscript,
-                       ValueEvaluationCache &Evaluated) {
+                       ValueEvaluationCache &Evaluated, Constant *file) {
 
   LLVMContext &Context = F.getContext();
   Instruction *InsertPoint = F.getEntryBlock().getFirstNonPHI();
@@ -384,99 +431,110 @@ void ApplyModification(Function &F, CMap &Grouped_C_OUT, CMap &C_GEN,
       "checkUpperBound", Attr, IRB.getVoidTy(), IRB.getInt64Ty(),
       IRB.getInt64Ty(), IRB.getPtrTy(), IRB.getInt64Ty());
 
-  // TODO: cache the file name
-  const auto file =
-      IRB.CreateGlobalStringPtr(F.getParent()->getSourceFileName());
-
-  auto createValueForSubExpr = [&](Instruction *point,
-                                   const SubscriptExpr &SE) -> Value * {
-    IRB.SetInsertPoint(point);
-    if (SE.isConstant()) {
-      return IRB.getInt64(SE.B);
-    } else if (SE.A == 1 && SE.B == 0) {
-      return IRB.CreateLoad(SE.i->getType(), (Value *)SE.i);
+  auto getOrEvaluateSubExpr = [&](Value *V) -> std::pair<SubscriptExpr, bool> {
+    if (Evaluated.find(V) != Evaluated.end()) {
+      return {Evaluated[V], false};
     } else {
-      Value *V = IRB.CreateLoad(SE.i->getType(), (Value *)SE.i);
-      if (SE.A != 1) {
-        V = IRB.CreateMul(V, IRB.getInt64(SE.A));
-      }
-      if (SE.B != 0) {
-        V = IRB.CreateAdd(V, IRB.getInt64(SE.B));
-      }
-      return V;
+      auto SE = SubscriptExpr::evaluate(V);
+      Evaluated[V] = SE;
+      return {SE, true};
     }
-  };
-
-  auto createCheckCall = [&](Instruction *point, Value *bound, Value *subscript,
-                             FunctionCallee Check) {
-    Value *ln;
-    if (const auto Loc = point->getDebugLoc()) {
-      ln = IRB.getInt64(Loc.getLine());
-    } else {
-      ln = IRB.getInt64(0);
-    }
-    IRB.SetInsertPoint(point->getNextNode());
-
-    auto CI = IRB.CreateCall(Check, {bound, subscript, file, ln});
-    return CI;
   };
 
   for (const auto *V : ValuesReferencedInSubscript) {
     auto &&C_OUT = Grouped_C_OUT[V];
     for (auto &BB : F) {
       if (C_OUT[&BB].isEmpty()) {
-        // rewrite checkBound to checkLowerBound and checkUpperBound
         continue;
-      } else {
-        // remove all old checks
-        // insert new check at the end of block or before the first check
       }
+      // remove all old checks
+      // insert new check at the end of block or before the first check
+
       C_GEN[V][&BB] = C_OUT[&BB]; // Update C_GEN
 
       SmallVector<Instruction *> CI = {};
-      Instruction *point = nullptr;
+      Instruction *firstOldCheckInst = nullptr;
+      SmallDenseMap<std::pair<int64_t, int64_t>, Value *> ReusableValue{};
       for (auto &Inst : BB.getInstList()) {
         if (isa<CallInst>(Inst)) {
           auto CB = cast<CallInst>(&Inst);
           auto F = CB->getCalledFunction();
 
-          if (F->getName() == "checkBound") {
-            Value *checked = CB->getArgOperand(1);
+          if (F->getName() != "checkUpperBound" &&
+              F->getName() != "checkLowerBound")
+            continue;
 
-            SubscriptExpr SubExpr{0, nullptr, 0};
+          Value *checked = CB->getArgOperand(1);
+          auto &&SE = getOrEvaluateSubExpr(checked);
 
-            if (Evaluated.find(checked) != Evaluated.end()) {
-              SubExpr = Evaluated[checked];
-            } else {
-              SubExpr = SubscriptExpr::evaluate(checked);
-              Evaluated[checked] = SubExpr;
-            }
+          if (SE.first.i != V)
+            continue;
 
-            CI.push_back(&Inst);
-            if (SubExpr.i == V) {
-              if (C_OUT[&BB].isEmpty()) {
-                Value *originalBound = CB->getArgOperand(0);
-                auto& BoundSE = Evaluated[originalBound];
-                BoundSE.B -= 1;
-                Value *tempBound = createValueForSubExpr(&Inst, BoundSE);
-                createCheckCall(&Inst, tempBound, checked, CheckUpper);
-                createCheckCall(&Inst, IRB.getInt64(0), checked, CheckLower);
-              } else {
-                for (auto &UBP : C_OUT[&BB].UbPredicates) {
-                  Value *tempBound = createValueForSubExpr(&Inst, UBP.Bound);
-                  createCheckCall(&Inst, tempBound, checked, CheckUpper);
-                }
-                for (auto &LBP : C_OUT[&BB].LbPredicates) {
-                  Value *tempBound = createValueForSubExpr(&Inst, LBP.Bound);
-                  createCheckCall(&Inst, tempBound, checked, CheckLower);
-                }
+          if (firstOldCheckInst == nullptr) {
+            firstOldCheckInst = Inst.getPrevNode();
+            if (!SE.second) {
+              ReusableValue.insert({{SE.first.A, SE.first.B}, checked});
+              Value *bound = CB->getArgOperand(0);
+              auto &&BoundSE = getOrEvaluateSubExpr(bound);
+              if (!BoundSE.second) {
+                ReusableValue.insert(
+                    {{BoundSE.first.A, BoundSE.first.B}, bound});
               }
             }
           }
+          CI.push_back(&Inst);
         }
       }
 
+      if (firstOldCheckInst == nullptr) {
+        firstOldCheckInst = BB.back().getPrevNode();
+        firstOldCheckInst->printAsOperand(llvm::errs());
+      }
+
+      for (auto &LBP : C_OUT[&BB].LbPredicates) {
+        auto ReuseIter = ReusableValue.find({LBP.Bound.A, LBP.Bound.B});
+
+        Value *bound =
+            ReuseIter == ReusableValue.end()
+                ? createValueForSubExpr(IRB, firstOldCheckInst, LBP.Bound)
+                : ReuseIter->second;
+        auto ReuseIterIndex = ReusableValue.find({LBP.Index.A, LBP.Index.B});
+
+        Value *subscript =
+            ReuseIterIndex == ReusableValue.end()
+                ? createValueForSubExpr(IRB, firstOldCheckInst, LBP.Index)
+                : ReuseIterIndex->second;
+        createCheckCall(IRB, firstOldCheckInst, CheckLower, bound, subscript,
+                        file);
+      }
+      for (auto &UBP : C_OUT[&BB].UbPredicates) {
+        auto ReuseIter = ReusableValue.find({UBP.Bound.A, UBP.Bound.B});
+
+        Value *bound =
+            ReuseIter == ReusableValue.end()
+                ? createValueForSubExpr(IRB, firstOldCheckInst, UBP.Bound)
+                : ReuseIter->second;
+
+        auto ReuseIterIndex = ReusableValue.find({UBP.Index.A, UBP.Index.B});
+
+        Value *subscript =
+            ReuseIterIndex == ReusableValue.end()
+                ? createValueForSubExpr(IRB, firstOldCheckInst, UBP.Index)
+                : ReuseIterIndex->second;
+
+        createCheckCall(IRB, firstOldCheckInst, CheckUpper, bound, subscript,
+                        file);
+      }
+
       for (auto *CI : CI) {
+        // remove all single use
+        // SmallVector<Instruction> WorkList{};
+        // TODO: DFS to remove all single use
+        // for (auto& U : CI->uses()) {
+        //   if (U->hasOneUser() && isa<Instruction>(U)) {
+        //     cast<Instruction>(U)->eraseFromParent();
+        //   }
+        // }
         CI->eraseFromParent();
       }
     }
@@ -648,18 +706,13 @@ void ApplyElimination(Function &F, CMap &Grouped_C_IN, CMap &C_GEN,
           std::optional<LowerBoundPredicate> LBP = std::nullopt;
           std::optional<UpperBoundPredicate> UBP = std::nullopt;
 
-          if (FName == "checkBound") {
-            EXTRACT_VALUE {
-              LBP = LowerBoundPredicate{SubscriptExpr::getZero(), IndexExpr};
-              UBP = UpperBoundPredicate{BoundExpr - 1, IndexExpr};
-            }
-          } else if (FName == "checkLowerBound") {
+          if (FName == "checkLowerBound") {
             EXTRACT_VALUE {
               LBP = LowerBoundPredicate{SubscriptExpr::getZero(), IndexExpr};
             }
           } else if (FName == "checkUpperBound") {
             EXTRACT_VALUE {
-              UBP = UpperBoundPredicate{BoundExpr - 1, IndexExpr};
+              UBP = UpperBoundPredicate{BoundExpr, IndexExpr};
             }
           }
 
@@ -701,6 +754,12 @@ PreservedAnalyses BoundCheckOptimization::run(Function &F,
   }
   llvm::errs() << "BoundCheckOptimization\n";
 
+  auto &Context = F.getContext();
+  auto InsertPoint = F.getEntryBlock().getFirstNonPHI();
+  IRBuilder<> IRB(InsertPoint);
+  SourceFileName =
+      IRB.CreateGlobalStringPtr(F.getParent()->getSourceFileName());
+
   CMap C_GEN{};
 
   EffectMap Effects{};
@@ -709,7 +768,8 @@ PreservedAnalyses BoundCheckOptimization::run(Function &F,
 
   ValuePtrVector ValuesReferencedInSubscript = {};
 
-  ComputeEffects(F, C_GEN, Effects, ValuesReferencedInSubscript, Evaluated);
+  ComputeEffects(F, C_GEN, Effects, ValuesReferencedInSubscript, Evaluated,
+                 SourceFileName);
 
   VERBOSE_PRINT {
     BLUE(llvm::errs())
@@ -741,7 +801,8 @@ PreservedAnalyses BoundCheckOptimization::run(Function &F,
     RunModificationAnalysis(F, C_IN, C_OUT, C_GEN, Effects,
                             ValuesReferencedInSubscript);
 
-    ApplyModification(F, C_OUT, C_GEN, ValuesReferencedInSubscript, Evaluated);
+    ApplyModification(F, C_OUT, C_GEN, ValuesReferencedInSubscript, Evaluated,
+                      SourceFileName);
   }
 
   VERBOSE_PRINT {

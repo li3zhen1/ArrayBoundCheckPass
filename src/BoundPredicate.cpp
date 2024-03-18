@@ -1,4 +1,5 @@
 #include "BoundPredicate.h"
+#include "CommonDef.h"
 
 BoundPredicateIdentity BoundPredicateBase::getIdentity() const {
   return {Bound.getIdentity(), Index.getIdentity()};
@@ -51,12 +52,16 @@ bool UpperBoundPredicate::subsumes(const UpperBoundPredicate &Other) const {
 
   if (!Bound.isConstant() && !Other.Bound.isConstant()) {
     assert(Bound.i == Other.Bound.i);
-    if (Bound.A == Other.Bound.A && Bound.B <= Other.Bound.B) {
-      return true;
+    if (Bound.A == Other.Bound.A) {
+      return Bound.B <= Other.Bound.B;
     }
+
+    print(YELLOW(llvm::errs()));
+    Other.print(YELLOW(llvm::errs()));
     llvm_unreachable("Unimplemented subsume case");
   }
-
+    print(YELLOW(llvm::errs()));
+    Other.print(YELLOW(llvm::errs())); 
   llvm_unreachable("Unimplemented subsume case");
 }
 
@@ -79,11 +84,17 @@ bool LowerBoundPredicate::subsumes(const LowerBoundPredicate &Other) const {
 
   if (!Bound.isConstant() && !Other.Bound.isConstant()) {
     assert(Bound.i == Other.Bound.i);
-    if (Bound.A == Other.Bound.A && Bound.B >= Other.Bound.B) {
-      return true;
+    if (Bound.A == Other.Bound.A) {
+      return Bound.B >= Other.Bound.B;
     }
+
+    print(YELLOW(llvm::errs()));
+    Other.print(YELLOW(llvm::errs()));
     llvm_unreachable("Unimplemented subsume case");
   }
+
+  print(YELLOW(llvm::errs()));
+  Other.print(YELLOW(llvm::errs()));
 
   llvm_unreachable("Unimplemented subsume case");
 }

@@ -34,6 +34,8 @@ struct SubscriptExpr {
 
   SubscriptExpr(): A(0), i(nullptr), B(0) {}
 
+  static SubscriptExpr initEmpty() { return {0, nullptr, 0}; }
+
   void mutatingAdd(int64_t c);
 
   void mutatingSub(int64_t c);

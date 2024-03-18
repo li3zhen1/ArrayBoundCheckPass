@@ -4,9 +4,13 @@
 #include "llvm/Passes/PassBuilder.h"
 #include "llvm/Passes/PassPlugin.h"
 
-class BoundCheckOptimization : public llvm::PassInfoMixin<BoundCheckOptimization> {
+class BoundCheckOptimization
+    : public llvm::PassInfoMixin<BoundCheckOptimization> {
+  llvm::Constant *SourceFileName;
+
 public:
-  llvm::PreservedAnalyses run(llvm::Function &F, llvm::FunctionAnalysisManager &FAM);
+  llvm::PreservedAnalyses run(llvm::Function &F,
+                              llvm::FunctionAnalysisManager &FAM);
   static bool isRequired() { return true; }
   virtual ~BoundCheckOptimization();
 };
