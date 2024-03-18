@@ -344,10 +344,13 @@ void RunModificationAnalysis(Function &F, CMap &C_IN, CMap &C_OUT, CMap &C_GEN,
     do {
       stable = true;
       round++;
+
       ONFLIGHT_PRINT {
-        llvm::errs() << "Iterating over ";
+
+        YELLOW(llvm::errs()) << "\n\n\n=========== Iterating over ";
         V->printAsOperand(llvm::errs());
-        llvm::errs() << "\n";
+        llvm::errs() << "  " << round << " round\n"
+                     << "\n";
       }
 
       SmallVector<const BasicBlock *, 32> WorkList{};
@@ -358,17 +361,20 @@ void RunModificationAnalysis(Function &F, CMap &C_IN, CMap &C_OUT, CMap &C_GEN,
 
         const auto *BB = WorkList.pop_back_val();
 
+        auto bkwd = backward(V, C_OUT[V][BB], BB);
         ONFLIGHT_PRINT {
-          BB->printAsOperand(BLUE(llvm::errs()));
-          llvm::errs() << "\n";
+          BB->printAsOperand(llvm::errs());
+          llvm::errs() << "------------------\n";
+          C_IN[V][BB].print(llvm::errs());
+          llvm::errs() << "V ";
+          bkwd.print(llvm::errs());
+          llvm::errs() << "= ";
         }
 
         assignIfChanged(C_IN[V][BB],
-                        BoundPredicateSet::Or(
-                            {C_GEN[V][BB], backward(V, C_OUT[V][BB], BB)}));
+                        BoundPredicateSet::Or({C_GEN[V][BB], bkwd}));
 
         ONFLIGHT_PRINT {
-          llvm::errs() << "\tC_IN\t";
           C_IN[V][BB].print(llvm::errs());
           llvm::errs() << "\n";
         }
@@ -376,19 +382,13 @@ void RunModificationAnalysis(Function &F, CMap &C_IN, CMap &C_OUT, CMap &C_GEN,
         SmallVector<BoundPredicateSet, 4> successorPredicts = {};
 
         for (const auto *Succ : successors(BB)) {
-          ONFLIGHT_PRINT {
-            Succ->printAsOperand(YELLOW(llvm::errs()));
-            llvm::errs() << "\n";
-          }
+          // ONFLIGHT_PRINT {
+          //   Succ->printAsOperand(YELLOW(llvm::errs()));
+          //   llvm::errs() << "\n";
+          // }
           successorPredicts.push_back(C_IN[V][Succ]);
         }
-        ONFLIGHT_PRINT {
-          llvm::errs() << "Successor predicts: " << successorPredicts.size()
-                       << "\n";
-          for (const auto &SP : successorPredicts) {
-            SP.print(llvm::errs());
-          }
-        }
+
         assignIfChanged(C_OUT[V][BB],
                         BoundPredicateSet::And(successorPredicts));
 
@@ -458,8 +458,9 @@ void ApplyModification(Function &F, CMap &Grouped_C_OUT, CMap &C_GEN,
         if (isa<CallInst>(Inst)) {
           auto CB = cast<CallInst>(&Inst);
           auto F = CB->getCalledFunction();
+          auto FName = F->getName();
 
-          if (F->getName() != CHECK_UB && F->getName() != CHECK_LB)
+          if (FName != CHECK_UB && FName != CHECK_LB)
             continue;
 
           Value *checked = CB->getArgOperand(1);
@@ -482,7 +483,21 @@ void ApplyModification(Function &F, CMap &Grouped_C_OUT, CMap &C_GEN,
               }
             }
           }
-          CI.push_back(&Inst);
+          if (FName == CHECK_UB) {
+            auto BSE = getOrEvaluateSubExpr(CB->getArgOperand(0));
+            auto UBP = UpperBoundPredicate{BSE.first, SE.first};
+            UBP.normalize();
+            if (C_OUT[&BB].subsumes(UBP)) {
+              CI.push_back(CB);
+            }
+          } else {
+            auto BSE = getOrEvaluateSubExpr(CB->getArgOperand(0));
+            auto LBP = LowerBoundPredicate{BSE.first, SE.first};
+            LBP.normalize();
+            if (C_OUT[&BB].subsumes(LBP)) {
+              CI.push_back(CB);
+            }
+          }
         }
       }
 

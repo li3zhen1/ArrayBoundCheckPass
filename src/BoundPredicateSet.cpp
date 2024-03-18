@@ -137,11 +137,19 @@ BoundPredicateSet
 BoundPredicateSet::And(SmallVector<BoundPredicateSet, 4> Sets) {
   BoundPredicateSet Result;
 
-  // for (const auto &S_i : Sets) {
-  //   // for all S_i
-  // }
+  bool isUbOpen = false;
+  bool isLbOpen = false;
+
+  for (const auto &S_i : Sets) {
+    S_i.print(errs());
+    llvm::errs() << " AND ";
+  }
+  llvm::errs() << " = ";
 
   for (const auto &S : Sets) {
+    if (S.LbPredicates.empty()) {
+      isLbOpen = true;
+    }
     for (const auto &LP : S.LbPredicates) {
       if (const auto _LP = findFirstMergablePredicate(Result.LbPredicates,
                                                       LP.Index.getIdentity())) {
@@ -149,6 +157,10 @@ BoundPredicateSet::And(SmallVector<BoundPredicateSet, 4> Sets) {
       } else {
         Result.LbPredicates.push_back(LP);
       }
+    }
+
+    if (S.UbPredicates.empty()) {
+      isUbOpen = true;
     }
     for (const auto &UP : S.UbPredicates) {
       if (const auto _UP = findFirstMergablePredicate(Result.UbPredicates,
@@ -159,6 +171,15 @@ BoundPredicateSet::And(SmallVector<BoundPredicateSet, 4> Sets) {
       }
     }
   }
+
+  if (isUbOpen) {
+    Result.UbPredicates.clear();
+  }
+
+  if (isLbOpen) {
+    Result.LbPredicates.clear();
+  }
+
   return Result;
 }
 
@@ -225,4 +246,14 @@ bool BoundPredicateSet::operator==(const BoundPredicateSet &Other) const {
 
 bool BoundPredicateSet::isEmpty() const {
   return LbPredicates.empty() && UbPredicates.empty();
+}
+
+bool BoundPredicateSet::subsumes(const LowerBoundPredicate &Other) const {
+  return llvm::any_of(LbPredicates,
+                      [&](const auto &It) { return It.subsumes(Other); });
+}
+
+bool BoundPredicateSet::subsumes(const UpperBoundPredicate &Other) const {
+  return llvm::any_of(UbPredicates,
+                      [&](const auto &It) { return It.subsumes(Other); });
 }

@@ -32,6 +32,9 @@ struct BoundPredicateSet {
 
   bool isEmpty() const;
 
+  bool subsumes(const LowerBoundPredicate &Other) const;
+  bool subsumes(const UpperBoundPredicate &Other) const;
+
 private:
   BoundPredicate getFirstItem() const;
 };
