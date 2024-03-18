@@ -114,8 +114,7 @@ void ComputeEffects(Function &F, CMap &Grouped_C_GEN, EffectMap &effects,
         const auto CB = cast<CallInst>(&Inst);
         const auto F = CB->getCalledFunction();
 
-        if (F->getName() != "checkLowerBound" &&
-            F->getName() != "checkUpperBound")
+        if (F->getName() != CHECK_LB && F->getName() != CHECK_UB)
           continue;
 
         const Value *bound = CB->getArgOperand(0);
@@ -133,10 +132,10 @@ void ComputeEffects(Function &F, CMap &Grouped_C_GEN, EffectMap &effects,
             ValuesReferencedInBoundCheck.push_back(SubExpr.i);
         }
 
-        if (F->getName() == "checkUpperBound") {
+        if (F->getName() == CHECK_UB) {
           auto UBP = UpperBoundPredicate{BoundExpr, SubExpr};
           predicts.addPredicate(UBP);
-        } else if (F->getName() == "checkLowerBound") {
+        } else if (F->getName() == CHECK_LB) {
           auto UBP = LowerBoundPredicate{BoundExpr, SubExpr};
           predicts.addPredicate(UBP);
         }
@@ -424,12 +423,12 @@ void ApplyModification(Function &F, CMap &Grouped_C_OUT, CMap &C_GEN,
   IRBuilder<> IRB(InsertPoint);
   AttributeList Attr;
   FunctionCallee CheckLower = F.getParent()->getOrInsertFunction(
-      "checkLowerBound", Attr, IRB.getVoidTy(), IRB.getInt64Ty(),
-      IRB.getInt64Ty(), IRB.getPtrTy(), IRB.getInt64Ty());
+      CHECK_LB, Attr, IRB.getVoidTy(), IRB.getInt64Ty(), IRB.getInt64Ty(),
+      IRB.getPtrTy(), IRB.getInt64Ty());
 
   FunctionCallee CheckUpper = F.getParent()->getOrInsertFunction(
-      "checkUpperBound", Attr, IRB.getVoidTy(), IRB.getInt64Ty(),
-      IRB.getInt64Ty(), IRB.getPtrTy(), IRB.getInt64Ty());
+      CHECK_UB, Attr, IRB.getVoidTy(), IRB.getInt64Ty(), IRB.getInt64Ty(),
+      IRB.getPtrTy(), IRB.getInt64Ty());
 
   auto getOrEvaluateSubExpr = [&](Value *V) -> std::pair<SubscriptExpr, bool> {
     if (Evaluated.find(V) != Evaluated.end()) {
@@ -460,8 +459,7 @@ void ApplyModification(Function &F, CMap &Grouped_C_OUT, CMap &C_GEN,
           auto CB = cast<CallInst>(&Inst);
           auto F = CB->getCalledFunction();
 
-          if (F->getName() != "checkUpperBound" &&
-              F->getName() != "checkLowerBound")
+          if (F->getName() != CHECK_UB && F->getName() != CHECK_LB)
             continue;
 
           Value *checked = CB->getArgOperand(1);
@@ -705,7 +703,7 @@ void ApplyElimination(Function &F, CMap &Grouped_C_IN, CMap &C_GEN,
           auto F = CB->getCalledFunction();
           auto FName = F->getName();
 
-          if (FName == "checkLowerBound") {
+          if (FName == CHECK_LB) {
             EXTRACT_VALUE {
               auto LBP = LowerBoundPredicate{BoundExpr, IndexExpr};
 
@@ -722,7 +720,7 @@ void ApplyElimination(Function &F, CMap &Grouped_C_IN, CMap &C_GEN,
                 RedundantCheck.push_back(&Inst);
               }
             }
-          } else if (FName == "checkUpperBound") {
+          } else if (FName == CHECK_UB) {
             EXTRACT_VALUE {
               auto UBP = UpperBoundPredicate{BoundExpr, IndexExpr};
 
@@ -759,8 +757,7 @@ PreservedAnalyses BoundCheckOptimization::run(Function &F,
   auto &Context = F.getContext();
   auto InsertPoint = F.getEntryBlock().getFirstNonPHI();
   IRBuilder<> IRB(InsertPoint);
-  SourceFileName =
-      F.getParent()->getNamedGlobal("__source_file_name__");
+  SourceFileName = F.getParent()->getNamedGlobal(SOURCE_FILE_NAME);
 
   CMap C_GEN{};
 

@@ -13,16 +13,16 @@ PreservedAnalyses BoundCheckInsertion::run(Function &F,
   IRBuilder<> IRB(InsertPoint);
   AttributeList Attr;
 
-
   FunctionCallee CheckLower = F.getParent()->getOrInsertFunction(
-      "checkLowerBound", Attr, IRB.getVoidTy(), IRB.getInt64Ty(), IRB.getInt64Ty(),
+      CHECK_LB, Attr, IRB.getVoidTy(), IRB.getInt64Ty(), IRB.getInt64Ty(),
       IRB.getPtrTy(), IRB.getInt64Ty());
   FunctionCallee CheckUpper = F.getParent()->getOrInsertFunction(
-      "checkUpperBound", Attr, IRB.getVoidTy(), IRB.getInt64Ty(), IRB.getInt64Ty(),
+      CHECK_UB, Attr, IRB.getVoidTy(), IRB.getInt64Ty(), IRB.getInt64Ty(),
       IRB.getPtrTy(), IRB.getInt64Ty());
 
   // TODO: cache the file name
-  const auto file = IRB.CreateGlobalStringPtr(F.getParent()->getSourceFileName(), "__source_file_name__");
+  const auto file = IRB.CreateGlobalStringPtr(
+      F.getParent()->getSourceFileName(), SOURCE_FILE_NAME);
 
   auto createCheckBoundCall = [&](Instruction *point, Value *arraySize,
                                   Value *subscript) {
@@ -33,7 +33,7 @@ PreservedAnalyses BoundCheckInsertion::run(Function &F,
       ln = IRB.getInt64(0);
     }
     IRB.SetInsertPoint(point);
-    Value* inclusiveBound = IRB.CreateSub(arraySize, IRB.getInt64(1));
+    Value *inclusiveBound = IRB.CreateSub(arraySize, IRB.getInt64(1));
     IRB.CreateCall(CheckUpper, {inclusiveBound, subscript, file, ln});
     IRB.CreateCall(CheckLower, {IRB.getInt64(0), subscript, file, ln});
   };

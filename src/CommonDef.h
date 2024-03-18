@@ -10,6 +10,11 @@
 extern const char *ACCESS_KEY;
 constexpr uint64_t UNKNOWN = 0;
 
+constexpr auto SOURCE_FILE_NAME = "__source_file_name__";
+
+constexpr auto CHECK_LB = "checkLowerBound";
+constexpr auto CHECK_UB = "checkUpperBound";
+
 #define _DEBUG_PRINT 0
 
 #define VERBOSE_PRINT if (true)
