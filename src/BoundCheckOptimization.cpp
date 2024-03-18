@@ -19,7 +19,7 @@ using EffectMap =
     DenseMap<const Value *,
              DenseMap<const BasicBlock *, SmallVector<SubscriptExpr>>>;
 
-using EvaluatedCheckCalls = DenseMap<const Instruction *, BoundPredicateSet>;
+using ValueEvaluationCache = DenseMap<const Value *, SubscriptExpr>;
 
 void print(CMap &C, raw_ostream &O, const ValuePtrVector &ValueKeys) {
 
@@ -63,13 +63,13 @@ void InitializeToEmpty(Function &F, CMap &C, const ValuePtrVector &ValueKeys) {
 
 void ComputeEffects(Function &F, CMap &Grouped_C_GEN, EffectMap &effects,
                     ValuePtrVector &ValuesReferencedInBoundCheck,
-                    EvaluatedCheckCalls &Evaluated) {
+                    ValueEvaluationCache &Evaluated) {
 
   SmallDenseMap<const BasicBlock *, BoundPredicateSet> C_GEN{};
 
-  for (const auto &BB : F) {
+  for (auto &BB : F) {
     BoundPredicateSet predicts = {};
-    for (const Instruction &Inst : BB) {
+    for (Instruction &Inst : BB) {
       if (isa<CallInst>(Inst)) {
         const auto CB = cast<CallInst>(&Inst);
         const auto F = CB->getCalledFunction();
@@ -80,18 +80,18 @@ void ComputeEffects(Function &F, CMap &Grouped_C_GEN, EffectMap &effects,
           const SubscriptExpr BoundExpr = SubscriptExpr::evaluate(bound);
           const SubscriptExpr SubExpr = SubscriptExpr::evaluate(checked);
 
+          Evaluated[bound] = BoundExpr;
+          Evaluated[checked] = SubExpr;
+
           if (!SubExpr.isConstant()) {
             if (llvm::is_contained(ValuesReferencedInBoundCheck, SubExpr.i) ==
                 false)
               ValuesReferencedInBoundCheck.push_back(SubExpr.i);
           }
-          // BoundPredicateSet BCS;
 
           predicts.addPredicate(UpperBoundPredicate{BoundExpr - 1, SubExpr});
           predicts.addPredicate(
               LowerBoundPredicate{SubscriptExpr::getZero(), SubExpr});
-
-          Evaluated[&Inst] = predicts;
         }
       }
     }
@@ -137,6 +137,7 @@ void ComputeEffects(Function &F, CMap &Grouped_C_GEN, EffectMap &effects,
           const auto Val = SI->getValueOperand();
           if (RefVal == Dst) {
             auto SE = SubscriptExpr::evaluate(Val);
+            Evaluated[Val] = SE;
             if (SE.i == Dst) {
               effects[RefVal][&BB].push_back(SE);
               VERBOSE_PRINT {
@@ -368,7 +369,8 @@ void RunModificationAnalysis(Function &F, CMap &C_IN, CMap &C_OUT, CMap &C_GEN,
 }
 
 void ApplyModification(Function &F, CMap &Grouped_C_OUT, CMap &C_GEN,
-                       ValuePtrVector &ValuesReferencedInSubscript) {
+                       ValuePtrVector &ValuesReferencedInSubscript,
+                       ValueEvaluationCache &Evaluated) {
 
   LLVMContext &Context = F.getContext();
   Instruction *InsertPoint = F.getEntryBlock().getFirstNonPHI();
@@ -423,9 +425,12 @@ void ApplyModification(Function &F, CMap &Grouped_C_OUT, CMap &C_GEN,
     auto &&C_OUT = Grouped_C_OUT[V];
     for (auto &BB : F) {
       if (C_OUT[&BB].isEmpty()) {
+        // rewrite checkBound to checkLowerBound and checkUpperBound
         continue;
+      } else {
+        // remove all old checks
+        // insert new check at the end of block or before the first check
       }
-
       C_GEN[V][&BB] = C_OUT[&BB]; // Update C_GEN
 
       SmallVector<Instruction *> CI = {};
@@ -438,19 +443,33 @@ void ApplyModification(Function &F, CMap &Grouped_C_OUT, CMap &C_GEN,
           if (F->getName() == "checkBound") {
             Value *checked = CB->getArgOperand(1);
 
-            const SubscriptExpr SubExpr = SubscriptExpr::evaluate(checked);
+            SubscriptExpr SubExpr{0, nullptr, 0};
 
+            if (Evaluated.find(checked) != Evaluated.end()) {
+              SubExpr = Evaluated[checked];
+            } else {
+              SubExpr = SubscriptExpr::evaluate(checked);
+              Evaluated[checked] = SubExpr;
+            }
+
+            CI.push_back(&Inst);
             if (SubExpr.i == V) {
-              CI.push_back(&Inst);
-
-              for (auto &UBP : C_OUT[&BB].UbPredicates) {
-                Value *tempBound = createValueForSubExpr(&Inst, UBP.Bound);
+              if (C_OUT[&BB].isEmpty()) {
+                Value *originalBound = CB->getArgOperand(0);
+                auto& BoundSE = Evaluated[originalBound];
+                BoundSE.B -= 1;
+                Value *tempBound = createValueForSubExpr(&Inst, BoundSE);
                 createCheckCall(&Inst, tempBound, checked, CheckUpper);
-              }
-
-              for (auto &LBP : C_OUT[&BB].LbPredicates) {
-                Value *tempBound = createValueForSubExpr(&Inst, LBP.Bound);
-                createCheckCall(&Inst, tempBound, checked, CheckLower);
+                createCheckCall(&Inst, IRB.getInt64(0), checked, CheckLower);
+              } else {
+                for (auto &UBP : C_OUT[&BB].UbPredicates) {
+                  Value *tempBound = createValueForSubExpr(&Inst, UBP.Bound);
+                  createCheckCall(&Inst, tempBound, checked, CheckUpper);
+                }
+                for (auto &LBP : C_OUT[&BB].LbPredicates) {
+                  Value *tempBound = createValueForSubExpr(&Inst, LBP.Bound);
+                  createCheckCall(&Inst, tempBound, checked, CheckLower);
+                }
               }
             }
           }
@@ -686,7 +705,7 @@ PreservedAnalyses BoundCheckOptimization::run(Function &F,
 
   EffectMap Effects{};
 
-  EvaluatedCheckCalls Evaluated{};
+  ValueEvaluationCache Evaluated{};
 
   ValuePtrVector ValuesReferencedInSubscript = {};
 
@@ -722,7 +741,7 @@ PreservedAnalyses BoundCheckOptimization::run(Function &F,
     RunModificationAnalysis(F, C_IN, C_OUT, C_GEN, Effects,
                             ValuesReferencedInSubscript);
 
-    ApplyModification(F, C_OUT, C_GEN, ValuesReferencedInSubscript);
+    ApplyModification(F, C_OUT, C_GEN, ValuesReferencedInSubscript, Evaluated);
   }
 
   VERBOSE_PRINT {
