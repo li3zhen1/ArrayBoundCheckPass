@@ -703,41 +703,35 @@ void ApplyElimination(Function &F, CMap &Grouped_C_IN, CMap &C_GEN,
           auto F = CB->getCalledFunction();
           auto FName = F->getName();
 
-          std::optional<LowerBoundPredicate> LBP = std::nullopt;
-          std::optional<UpperBoundPredicate> UBP = std::nullopt;
-
           if (FName == "checkLowerBound") {
             EXTRACT_VALUE {
-              LBP = LowerBoundPredicate{SubscriptExpr::getZero(), IndexExpr};
+              auto LBP = LowerBoundPredicate{BoundExpr, IndexExpr};
+
+              if (llvm::any_of(C_IN[&BB].LbPredicates,
+                               [&](const LowerBoundPredicate &p) {
+                                 return p.subsumes(LBP);
+                               })) {
+                llvm::errs() << "Redundant check at ";
+                BB.printAsOperand(errs());
+                llvm::errs() << " : ";
+                LBP.print(errs());
+                llvm::errs() << "\n";
+              }
             }
           } else if (FName == "checkUpperBound") {
             EXTRACT_VALUE {
-              UBP = UpperBoundPredicate{BoundExpr, IndexExpr};
-            }
-          }
+              auto UBP = UpperBoundPredicate{BoundExpr, IndexExpr};
 
-          if (LBP.has_value()) {
-            if (llvm::any_of(C_IN[&BB].LbPredicates,
-                             [&](const LowerBoundPredicate &p) {
-                               return p.subsumes(*LBP);
-                             })) {
-              llvm::errs() << "Redundant check at ";
-              BB.printAsOperand(errs());
-              llvm::errs() << " : ";
-              LBP->print(errs());
-              llvm::errs() << "\n";
-            }
-          }
-          if (UBP.has_value()) {
-            if (llvm::any_of(C_IN[&BB].UbPredicates,
-                             [&](const UpperBoundPredicate &p) {
-                               return p.subsumes(*UBP);
-                             })) {
-              llvm::errs() << "Redundant check at ";
-              BB.printAsOperand(errs());
-              llvm::errs() << " : ";
-              UBP->print(errs());
-              llvm::errs() << "\n";
+              if (llvm::any_of(C_IN[&BB].UbPredicates,
+                               [&](const UpperBoundPredicate &p) {
+                                 return p.subsumes(UBP);
+                               })) {
+                llvm::errs() << "Redundant check at ";
+                BB.printAsOperand(errs());
+                llvm::errs() << " : ";
+                UBP.print(errs());
+                llvm::errs() << "\n";
+              }
             }
           }
         }
