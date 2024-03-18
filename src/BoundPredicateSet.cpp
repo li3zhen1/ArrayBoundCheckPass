@@ -1,5 +1,6 @@
 #include "BoundPredicateSet.h"
 #include "BoundPredicate.h"
+#include "CommonDef.h"
 #include "SubscriptExpr.h"
 // #include <variant>
 
@@ -78,8 +79,9 @@ optional<SubscriptIndentity> BoundPredicateSet::getSubscriptIdentity() const {
   return nullopt;
 }
 
- LowerBoundPredicate * findFirstMergablePredicate(SmallVector<LowerBoundPredicate> &S,
-                                const SubscriptIndentity ID) {
+LowerBoundPredicate *
+findFirstMergablePredicate(SmallVector<LowerBoundPredicate> &S,
+                           const SubscriptIndentity ID) {
   const auto Ptr = llvm::find_if(
       S, [&](const auto &It) { return It.Index.getIdentity() == ID; });
 
@@ -89,8 +91,9 @@ optional<SubscriptIndentity> BoundPredicateSet::getSubscriptIdentity() const {
   return nullptr;
 }
 
- UpperBoundPredicate * findFirstMergablePredicate(SmallVector<UpperBoundPredicate> &S,
-                                const SubscriptIndentity ID) {
+UpperBoundPredicate *
+findFirstMergablePredicate(SmallVector<UpperBoundPredicate> &S,
+                           const SubscriptIndentity ID) {
   const auto Ptr = llvm::find_if(
       S, [&](const auto &It) { return It.Index.getIdentity() == ID; });
 
@@ -103,6 +106,8 @@ optional<SubscriptIndentity> BoundPredicateSet::getSubscriptIdentity() const {
 BoundPredicateSet
 BoundPredicateSet::Or(SmallVector<BoundPredicateSet, 4> Sets) {
   BoundPredicateSet Result;
+
+  // there should be no other predicate subsumes the predicates in the result
 
   for (const auto &S : Sets) {
     for (const auto &LP : S.LbPredicates) {
@@ -122,12 +127,20 @@ BoundPredicateSet::Or(SmallVector<BoundPredicateSet, 4> Sets) {
       }
     }
   }
+
+  // Result.print(errs());
+
   return Result;
 }
 
 BoundPredicateSet
 BoundPredicateSet::And(SmallVector<BoundPredicateSet, 4> Sets) {
   BoundPredicateSet Result;
+
+  // for (const auto &S_i : Sets) {
+  //   // for all S_i
+  // }
+
   for (const auto &S : Sets) {
     for (const auto &LP : S.LbPredicates) {
       if (const auto _LP = findFirstMergablePredicate(Result.LbPredicates,
@@ -137,12 +150,12 @@ BoundPredicateSet::And(SmallVector<BoundPredicateSet, 4> Sets) {
         Result.LbPredicates.push_back(LP);
       }
     }
-    for (const auto &It : S.UbPredicates) {
+    for (const auto &UP : S.UbPredicates) {
       if (const auto _UP = findFirstMergablePredicate(Result.UbPredicates,
-                                                      It.Index.getIdentity())) {
-        _UP->Bound.B = std::max(_UP->Bound.B, It.Bound.B);
+                                                      UP.Index.getIdentity())) {
+        _UP->Bound.B = std::max(_UP->Bound.B, UP.Bound.B);
       } else {
-        Result.UbPredicates.push_back(It);
+        Result.UbPredicates.push_back(UP);
       }
     }
   }
@@ -150,6 +163,15 @@ BoundPredicateSet::And(SmallVector<BoundPredicateSet, 4> Sets) {
 }
 
 void BoundPredicateSet::print(raw_ostream &O) const {
+  if (LbPredicates.size() == 1 && UbPredicates.size() == 1 &&
+      LbPredicates.front().Index == UbPredicates.front().Index) {
+    LbPredicates.front().print(O);
+    O << " ≤ ";
+    UbPredicates.front().Bound.dump(GreenO);
+    O << "\n";
+    return;
+  }
+
   for (const auto &It : LbPredicates) {
     It.print(O);
   }
@@ -183,7 +205,6 @@ BoundPredicate BoundPredicateSet::getFirstItem() const {
   llvm_unreachable("Empty BoundPredicateSet!");
 }
 
-
 bool BoundPredicateSet::operator==(const BoundPredicateSet &Other) const {
   bool IsEqual = true;
   if (LbPredicates.size() != Other.LbPredicates.size() ||
@@ -201,7 +222,6 @@ bool BoundPredicateSet::operator==(const BoundPredicateSet &Other) const {
 
   return IsEqual;
 }
-
 
 bool BoundPredicateSet::isEmpty() const {
   return LbPredicates.empty() && UbPredicates.empty();

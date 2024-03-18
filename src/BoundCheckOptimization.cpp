@@ -19,6 +19,8 @@ using EffectMap =
     DenseMap<const Value *,
              DenseMap<const BasicBlock *, SmallVector<SubscriptExpr>>>;
 
+using EvaluatedCheckCalls = DenseMap<const Instruction *, BoundPredicateSet>;
+
 void print(CMap &C, raw_ostream &O, const ValuePtrVector &ValueKeys) {
 
   for (const auto *V : ValueKeys) {
@@ -60,7 +62,8 @@ void InitializeToEmpty(Function &F, CMap &C, const ValuePtrVector &ValueKeys) {
 }
 
 void ComputeEffects(Function &F, CMap &Grouped_C_GEN, EffectMap &effects,
-                    ValuePtrVector &ValuesReferencedInBoundCheck) {
+                    ValuePtrVector &ValuesReferencedInBoundCheck,
+                    EvaluatedCheckCalls &Evaluated) {
 
   SmallDenseMap<const BasicBlock *, BoundPredicateSet> C_GEN{};
 
@@ -87,7 +90,8 @@ void ComputeEffects(Function &F, CMap &Grouped_C_GEN, EffectMap &effects,
           predicts.addPredicate(UpperBoundPredicate{BoundExpr - 1, SubExpr});
           predicts.addPredicate(
               LowerBoundPredicate{SubscriptExpr::getZero(), SubExpr});
-          // predicts.push_back(BCS);
+
+          Evaluated[&Inst] = predicts;
         }
       }
     }
@@ -323,14 +327,13 @@ void RunModificationAnalysis(Function &F, CMap &C_IN, CMap &C_OUT, CMap &C_GEN,
         }
 
         SmallVector<BoundPredicateSet, 4> successorPredicts = {};
-        if (succ_begin(BB) != succ_end(BB)) {
-          for (const auto *Succ : successors(BB)) {
-            ONFLIGHT_PRINT {
-              Succ->printAsOperand(YELLOW(llvm::errs()));
-              llvm::errs() << "\n";
-            }
-            successorPredicts.push_back(C_IN[V][Succ]);
+
+        for (const auto *Succ : successors(BB)) {
+          ONFLIGHT_PRINT {
+            Succ->printAsOperand(YELLOW(llvm::errs()));
+            llvm::errs() << "\n";
           }
+          successorPredicts.push_back(C_IN[V][Succ]);
         }
         ONFLIGHT_PRINT {
           llvm::errs() << "Successor predicts: " << successorPredicts.size()
@@ -353,9 +356,18 @@ void RunModificationAnalysis(Function &F, CMap &C_IN, CMap &C_OUT, CMap &C_GEN,
 
     llvm::errs() << "Stable after " << round << " rounds (bkwd)\n";
   }
+
+  VERBOSE_PRINT {
+    BLUE(llvm::errs())
+        << "===================== Modification C_IN ===================== \n";
+    print(C_IN, (llvm::errs()), ValuesReferencedInSubscript);
+    BLUE(llvm::errs())
+        << "===================== Modification C_OUT ===================== \n";
+    print(C_OUT, (llvm::errs()), ValuesReferencedInSubscript);
+  }
 }
 
-void ApplyModification(Function &F, CMap &Grouped_C_OUT,
+void ApplyModification(Function &F, CMap &Grouped_C_OUT, CMap &C_GEN,
                        ValuePtrVector &ValuesReferencedInSubscript) {
 
   LLVMContext &Context = F.getContext();
@@ -413,6 +425,9 @@ void ApplyModification(Function &F, CMap &Grouped_C_OUT,
       if (C_OUT[&BB].isEmpty()) {
         continue;
       }
+
+      C_GEN[V][&BB] = C_OUT[&BB]; // Update C_GEN
+
       SmallVector<Instruction *> CI = {};
       Instruction *point = nullptr;
       for (auto &Inst : BB.getInstList()) {
@@ -441,6 +456,7 @@ void ApplyModification(Function &F, CMap &Grouped_C_OUT,
           }
         }
       }
+
       for (auto *CI : CI) {
         CI->eraseFromParent();
       }
@@ -459,6 +475,7 @@ void RunEliminationAnalysis(Function &F, CMap &C_IN, CMap &C_OUT, CMap &C_GEN,
                      const BasicBlock *B) -> BoundPredicateSet {
 #define KILL_CHECK break
     BoundPredicateSet S{};
+
     const auto &Effect = EFFECT(B, V);
 
     for (auto &LBP : C_IN_B.LbPredicates) {
@@ -551,15 +568,14 @@ void RunEliminationAnalysis(Function &F, CMap &C_IN, CMap &C_OUT, CMap &C_GEN,
 
         const auto *BB = WorkList.pop_back_val();
 
-        assignIfChanged(
-            C_OUT[V][BB],
-            BoundPredicateSet::Or({C_GEN[V][BB], forward(V, C_IN[V][BB], BB)}));
+        const auto newCOUT =
+            BoundPredicateSet::Or({C_GEN[V][BB], forward(V, C_IN[V][BB], BB)});
+
+        assignIfChanged(C_OUT[V][BB], newCOUT);
 
         SmallVector<BoundPredicateSet, 4> predecessorPredicts = {};
-        if (pred_begin(BB) != pred_begin(BB)) {
-          for (const auto *Pred : predecessors(BB)) {
-            predecessorPredicts.push_back(C_OUT[V][Pred]);
-          }
+        for (const auto *Pred : predecessors(BB)) {
+          predecessorPredicts.push_back(C_OUT[V][Pred]);
         }
         assignIfChanged(C_IN[V][BB],
                         BoundPredicateSet::And(predecessorPredicts));
@@ -576,6 +592,87 @@ void RunEliminationAnalysis(Function &F, CMap &C_IN, CMap &C_OUT, CMap &C_GEN,
 
     llvm::errs() << "Stable after " << round << " rounds (fwd)\n";
   }
+
+  VERBOSE_PRINT {
+    BLUE(llvm::errs())
+        << "===================== Elimination C_IN ===================== \n";
+    print(C_IN, (llvm::errs()), ValuesReferencedInSubscript);
+
+    BLUE(llvm::errs())
+        << "===================== Elimination C_OUT ===================== \n";
+    print(C_OUT, (llvm::errs()), ValuesReferencedInSubscript);
+  }
+}
+
+void ApplyElimination(Function &F, CMap &Grouped_C_IN, CMap &C_GEN,
+                      ValuePtrVector &ValuesReferencedInSubscript) {
+
+#define EXTRACT_VALUE                                                          \
+  Value *BoundValue = CB->getArgOperand(0);                                    \
+  Value *IndexValue = CB->getArgOperand(1);                                    \
+  SubscriptExpr BoundExpr = SubscriptExpr::evaluate(BoundValue);               \
+  SubscriptExpr IndexExpr = SubscriptExpr::evaluate(IndexValue);               \
+  if (IndexExpr.i == V)
+
+  for (const auto *V : ValuesReferencedInSubscript) {
+    auto &&C_IN = Grouped_C_IN[V];
+    for (const auto &BB : F) {
+      if (C_IN[&BB].isEmpty()) {
+        continue;
+      }
+      for (auto &Inst : BB.getInstList()) {
+        if (isa<CallInst>(Inst)) {
+          auto CB = cast<CallInst>(&Inst);
+          auto F = CB->getCalledFunction();
+          auto FName = F->getName();
+
+          std::optional<LowerBoundPredicate> LBP = std::nullopt;
+          std::optional<UpperBoundPredicate> UBP = std::nullopt;
+
+          if (FName == "checkBound") {
+            EXTRACT_VALUE {
+              LBP = LowerBoundPredicate{SubscriptExpr::getZero(), IndexExpr};
+              UBP = UpperBoundPredicate{BoundExpr - 1, IndexExpr};
+            }
+          } else if (FName == "checkLowerBound") {
+            EXTRACT_VALUE {
+              LBP = LowerBoundPredicate{SubscriptExpr::getZero(), IndexExpr};
+            }
+          } else if (FName == "checkUpperBound") {
+            EXTRACT_VALUE {
+              UBP = UpperBoundPredicate{BoundExpr - 1, IndexExpr};
+            }
+          }
+
+          if (LBP.has_value()) {
+            if (llvm::any_of(C_IN[&BB].LbPredicates,
+                             [&](const LowerBoundPredicate &p) {
+                               return p.subsumes(*LBP);
+                             })) {
+              llvm::errs() << "Redundant check at ";
+              BB.printAsOperand(errs());
+              llvm::errs() << " : ";
+              LBP->print(errs());
+              llvm::errs() << "\n";
+            }
+          }
+          if (UBP.has_value()) {
+            if (llvm::any_of(C_IN[&BB].UbPredicates,
+                             [&](const UpperBoundPredicate &p) {
+                               return p.subsumes(*UBP);
+                             })) {
+              llvm::errs() << "Redundant check at ";
+              BB.printAsOperand(errs());
+              llvm::errs() << " : ";
+              UBP->print(errs());
+              llvm::errs() << "\n";
+            }
+          }
+        }
+      }
+    }
+  }
+#undef EXTRACT_VALUE
 }
 
 PreservedAnalyses BoundCheckOptimization::run(Function &F,
@@ -588,9 +685,12 @@ PreservedAnalyses BoundCheckOptimization::run(Function &F,
   CMap C_GEN{};
 
   EffectMap Effects{};
+
+  EvaluatedCheckCalls Evaluated{};
+
   ValuePtrVector ValuesReferencedInSubscript = {};
 
-  ComputeEffects(F, C_GEN, Effects, ValuesReferencedInSubscript);
+  ComputeEffects(F, C_GEN, Effects, ValuesReferencedInSubscript, Evaluated);
 
   VERBOSE_PRINT {
     BLUE(llvm::errs())
@@ -609,23 +709,45 @@ PreservedAnalyses BoundCheckOptimization::run(Function &F,
     }
   }
 
-  CMap C_IN{};
-  CMap C_OUT{};
-  InitializeToEmpty(F, C_IN, ValuesReferencedInSubscript);
-  InitializeToEmpty(F, C_OUT, ValuesReferencedInSubscript);
+  {
+    /**
+     * @brief Modification Analysis
+     *
+     */
+    CMap C_IN{};
+    CMap C_OUT{};
+    InitializeToEmpty(F, C_IN, ValuesReferencedInSubscript);
+    InitializeToEmpty(F, C_OUT, ValuesReferencedInSubscript);
 
-  RunModificationAnalysis(F, C_IN, C_OUT, C_GEN, Effects,
-                          ValuesReferencedInSubscript);
+    RunModificationAnalysis(F, C_IN, C_OUT, C_GEN, Effects,
+                            ValuesReferencedInSubscript);
+
+    ApplyModification(F, C_OUT, C_GEN, ValuesReferencedInSubscript);
+  }
 
   VERBOSE_PRINT {
-    BLUE(llvm::errs())
-        << "===================== C_OUT ===================== \n";
-    print(C_OUT, (llvm::errs()), ValuesReferencedInSubscript);
+    BLUE(llvm::errs()) << "===================== C_GEN After modification "
+                          "===================== \n";
+    print(C_GEN, (llvm::errs()), ValuesReferencedInSubscript);
+  }
+
+  {
+    /**
+     * @brief Elimination Analysis
+     *
+     */
+    CMap C_IN{};
+    CMap C_OUT{};
+    InitializeToEmpty(F, C_IN, ValuesReferencedInSubscript);
+    InitializeToEmpty(F, C_OUT, ValuesReferencedInSubscript);
+
+    RunEliminationAnalysis(F, C_IN, C_OUT, C_GEN, Effects,
+                           ValuesReferencedInSubscript);
+
+    ApplyElimination(F, C_IN, C_GEN, ValuesReferencedInSubscript);
   }
 
   // F.viewCFGOnly();
-
-  ApplyModification(F, C_OUT, ValuesReferencedInSubscript);
 
   return PreservedAnalyses::none();
 }

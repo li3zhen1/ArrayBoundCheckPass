@@ -45,6 +45,16 @@ void checkUpperBound(int bound, int subscript, const char *file, int line) {
   }
 }
 
+void runtimeIndexOutOfBounds(int subscript, int bound, const char *file, int line) {
+  std::cerr << "Array out of bound at " << file;
+  if (line > 0) {
+    std::cerr << "#" << line;
+  }
+  std::cerr << " while "
+            << "subscripting " << subscript << " to array of size " << bound
+            << std::endl;
+}
+
 #ifdef __cplusplus
 }
 #endif

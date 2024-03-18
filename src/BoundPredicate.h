@@ -1,8 +1,8 @@
 #ifndef BOUND_PREDICATE_H
 #define BOUND_PREDICATE_H
 
-#include "SubscriptExpr.h"
 #include "CommonDef.h"
+#include "SubscriptExpr.h"
 // #include <variant>
 
 struct BoundPredicateIdentity {
@@ -50,11 +50,16 @@ struct BoundPredicateBase {
   // void print(raw_ostream &O) const;
 };
 
+struct LowerBoundPredicate;
+
 struct UpperBoundPredicate : public BoundPredicateBase {
   UpperBoundPredicate(SubscriptExpr Bound, SubscriptExpr Index)
       : BoundPredicateBase(Bound, Index) {}
 
   void print(raw_ostream &O) const;
+
+  bool subsumes(const UpperBoundPredicate &Other) const;
+  bool subsumes(const LowerBoundPredicate &Other) const;
 };
 
 struct LowerBoundPredicate : public BoundPredicateBase {
@@ -62,6 +67,9 @@ struct LowerBoundPredicate : public BoundPredicateBase {
       : BoundPredicateBase(Bound, Index) {}
 
   void print(raw_ostream &O) const;
+
+  bool subsumes(const UpperBoundPredicate &Other) const;
+  bool subsumes(const LowerBoundPredicate &Other) const;
 };
 
 typedef std::variant<UpperBoundPredicate, LowerBoundPredicate> BoundPredicate;
