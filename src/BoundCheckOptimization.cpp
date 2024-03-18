@@ -691,12 +691,14 @@ void ApplyElimination(Function &F, CMap &Grouped_C_IN, CMap &C_GEN,
   SubscriptExpr IndexExpr = SubscriptExpr::evaluate(IndexValue);               \
   if (IndexExpr.i == V)
 
+  SmallVector<Instruction *, 32> RedundantCheck = {};
   for (const auto *V : ValuesReferencedInSubscript) {
     auto &&C_IN = Grouped_C_IN[V];
-    for (const auto &BB : F) {
+    for (auto &BB : F) {
       if (C_IN[&BB].isEmpty()) {
         continue;
       }
+
       for (auto &Inst : BB.getInstList()) {
         if (isa<CallInst>(Inst)) {
           auto CB = cast<CallInst>(&Inst);
@@ -716,6 +718,8 @@ void ApplyElimination(Function &F, CMap &Grouped_C_IN, CMap &C_GEN,
                 llvm::errs() << " : ";
                 LBP.print(errs());
                 llvm::errs() << "\n";
+
+                RedundantCheck.push_back(&Inst);
               }
             }
           } else if (FName == "checkUpperBound") {
@@ -731,12 +735,16 @@ void ApplyElimination(Function &F, CMap &Grouped_C_IN, CMap &C_GEN,
                 llvm::errs() << " : ";
                 UBP.print(errs());
                 llvm::errs() << "\n";
+                RedundantCheck.push_back(&Inst);
               }
             }
           }
         }
       }
     }
+  }
+  for (auto *RC : RedundantCheck) {
+    RC->eraseFromParent();
   }
 #undef EXTRACT_VALUE
 }
@@ -752,7 +760,7 @@ PreservedAnalyses BoundCheckOptimization::run(Function &F,
   auto InsertPoint = F.getEntryBlock().getFirstNonPHI();
   IRBuilder<> IRB(InsertPoint);
   SourceFileName =
-      IRB.CreateGlobalStringPtr(F.getParent()->getSourceFileName());
+      F.getParent()->getNamedGlobal("__source_file_name__");
 
   CMap C_GEN{};
 

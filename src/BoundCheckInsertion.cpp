@@ -13,9 +13,6 @@ PreservedAnalyses BoundCheckInsertion::run(Function &F,
   IRBuilder<> IRB(InsertPoint);
   AttributeList Attr;
 
-  FunctionCallee Check = F.getParent()->getOrInsertFunction(
-      "checkBound", Attr, IRB.getVoidTy(), IRB.getInt64Ty(), IRB.getInt64Ty(),
-      IRB.getPtrTy(), IRB.getInt64Ty());
 
   FunctionCallee CheckLower = F.getParent()->getOrInsertFunction(
       "checkLowerBound", Attr, IRB.getVoidTy(), IRB.getInt64Ty(), IRB.getInt64Ty(),
@@ -25,7 +22,7 @@ PreservedAnalyses BoundCheckInsertion::run(Function &F,
       IRB.getPtrTy(), IRB.getInt64Ty());
 
   // TODO: cache the file name
-  const auto file = IRB.CreateGlobalStringPtr(F.getParent()->getSourceFileName());
+  const auto file = IRB.CreateGlobalStringPtr(F.getParent()->getSourceFileName(), "__source_file_name__");
 
   auto createCheckBoundCall = [&](Instruction *point, Value *arraySize,
                                   Value *subscript) {
