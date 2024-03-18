@@ -473,10 +473,12 @@ void ApplyModification(Function &F, CMap &Grouped_C_OUT, CMap &C_GEN,
             if (!SE.second) {
               ReusableValue.insert({{SE.first.A, SE.first.B}, checked});
               Value *bound = CB->getArgOperand(0);
-              auto &&BoundSE = getOrEvaluateSubExpr(bound);
-              if (!BoundSE.second) {
-                ReusableValue.insert(
-                    {{BoundSE.first.A, BoundSE.first.B}, bound});
+              if (!isa<ConstantInt>(bound)) {
+                auto &&BoundSE = getOrEvaluateSubExpr(bound);
+                if (!BoundSE.second) {
+                  ReusableValue.insert(
+                      {{BoundSE.first.A, BoundSE.first.B}, bound});
+                }
               }
             }
           }
@@ -486,40 +488,27 @@ void ApplyModification(Function &F, CMap &Grouped_C_OUT, CMap &C_GEN,
 
       if (firstOldCheckInst == nullptr) {
         firstOldCheckInst = BB.back().getPrevNode();
-        firstOldCheckInst->printAsOperand(llvm::errs());
+        // firstOldCheckInst->printAsOperand(llvm::errs());
       }
 
+      const auto reuseOrCreate = [&](const SubscriptExpr &SE) -> Value * {
+        auto Iter = ReusableValue.find({SE.A, SE.B});
+        if (Iter == ReusableValue.end()) {
+          return createValueForSubExpr(IRB, firstOldCheckInst, SE);
+        } else {
+          return Iter->second;
+        }
+      };
+
       for (auto &LBP : C_OUT[&BB].LbPredicates) {
-        auto ReuseIter = ReusableValue.find({LBP.Bound.A, LBP.Bound.B});
-
-        Value *bound =
-            ReuseIter == ReusableValue.end()
-                ? createValueForSubExpr(IRB, firstOldCheckInst, LBP.Bound)
-                : ReuseIter->second;
-        auto ReuseIterIndex = ReusableValue.find({LBP.Index.A, LBP.Index.B});
-
-        Value *subscript =
-            ReuseIterIndex == ReusableValue.end()
-                ? createValueForSubExpr(IRB, firstOldCheckInst, LBP.Index)
-                : ReuseIterIndex->second;
+        Value *bound = createValueForSubExpr(IRB, firstOldCheckInst, LBP.Bound);
+        Value *subscript = reuseOrCreate(LBP.Index);
         createCheckCall(IRB, firstOldCheckInst, CheckLower, bound, subscript,
                         file);
       }
       for (auto &UBP : C_OUT[&BB].UbPredicates) {
-        auto ReuseIter = ReusableValue.find({UBP.Bound.A, UBP.Bound.B});
-
-        Value *bound =
-            ReuseIter == ReusableValue.end()
-                ? createValueForSubExpr(IRB, firstOldCheckInst, UBP.Bound)
-                : ReuseIter->second;
-
-        auto ReuseIterIndex = ReusableValue.find({UBP.Index.A, UBP.Index.B});
-
-        Value *subscript =
-            ReuseIterIndex == ReusableValue.end()
-                ? createValueForSubExpr(IRB, firstOldCheckInst, UBP.Index)
-                : ReuseIterIndex->second;
-
+        Value *bound = createValueForSubExpr(IRB, firstOldCheckInst, UBP.Bound);
+        Value *subscript = reuseOrCreate(UBP.Index);
         createCheckCall(IRB, firstOldCheckInst, CheckUpper, bound, subscript,
                         file);
       }
@@ -703,6 +692,9 @@ void ApplyElimination(Function &F, CMap &Grouped_C_IN, CMap &C_GEN,
           auto F = CB->getCalledFunction();
           auto FName = F->getName();
 
+          // Inst.print(llvm::errs());
+          // llvm::errs() << "\n";
+
           if (FName == CHECK_LB) {
             EXTRACT_VALUE {
               auto LBP = LowerBoundPredicate{BoundExpr, IndexExpr};
@@ -733,6 +725,7 @@ void ApplyElimination(Function &F, CMap &Grouped_C_IN, CMap &C_GEN,
                 llvm::errs() << " : ";
                 UBP.print(errs());
                 llvm::errs() << "\n";
+
                 RedundantCheck.push_back(&Inst);
               }
             }
