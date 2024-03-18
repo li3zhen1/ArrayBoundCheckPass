@@ -50,21 +50,6 @@ void print(CMap &C, raw_ostream &O, const ValuePtrVector &ValueKeys) {
   // }
 }
 
-inline auto FindMergableCheckSet(BoundCheckSetList &BCSL,
-                                 const SubscriptIndentity &SI)
-    -> BoundPredicateSet * {
-  if (BCSL.empty()) {
-    return nullptr;
-  }
-  return llvm::find_if(BCSL, [&](const auto &BCS) {
-    if (BCS.getSubscriptIdentity().has_value() == false) {
-      return false;
-    }
-    return BCS.getSubscriptIdentity().value() == SI;
-  });
-  return nullptr;
-}
-
 void InitializeToEmpty(Function &F, CMap &C, const ValuePtrVector &ValueKeys) {
   for (const auto *V : ValueKeys) {
     C[V] = DenseMap<const BasicBlock *, BoundPredicateSet>{};
@@ -184,32 +169,36 @@ void ComputeEffects(Function &F, CMap &Grouped_C_GEN, EffectMap &effects,
   }
 }
 
+__attribute__((always_inline)) inline EffectOnSubscript
+getEffect(const SmallVector<SubscriptExpr> &SE, const Value *V) {
+  if (SE.empty()) {
+    return {EffectKind::Unchanged, std::nullopt};
+  }
+  const auto &Last = SE.back();
+  if (Last.i != nullptr) {
+    assert(Last.i == V);
+    if (Last.A == 1) {
+      if (Last.B == 0) {
+        return {EffectKind::Unchanged, std::nullopt};
+      } else if (Last.B > 0) {
+        return {EffectKind::Increment, Last.B};
+      } else {
+        return {EffectKind::Decrement, -Last.B};
+      }
+    } else if (Last.B == 0) {
+      if (Last.A > 1)
+        return {EffectKind::Multiply, Last.A};
+    }
+  }
+  return {EffectKind::UnknownChanged, std::nullopt};
+}
+
 void RunModificationAnalysis(Function &F, CMap &C_IN, CMap &C_OUT, CMap &C_GEN,
                              EffectMap &Effects,
                              ValuePtrVector &ValuesReferencedInSubscript) {
 
   auto EFFECT = [&](const BasicBlock *B, const Value *V) -> EffectOnSubscript {
-    const auto &SE = Effects[V][B];
-    if (SE.empty()) {
-      return {EffectKind::Unchanged, std::nullopt};
-    }
-    const auto &Last = SE.back();
-    if (Last.i != nullptr) {
-      assert(Last.i == V);
-      if (Last.A == 1) {
-        if (Last.B == 0) {
-          return {EffectKind::Unchanged, std::nullopt};
-        } else if (Last.B > 0) {
-          return {EffectKind::Increment, Last.B};
-        } else {
-          return {EffectKind::Decrement, -Last.B};
-        }
-      } else if (Last.B == 0) {
-        if (Last.A > 1)
-          return {EffectKind::Multiply, Last.A};
-      }
-    }
-    return {EffectKind::UnknownChanged, std::nullopt};
+    return getEffect(Effects[V][B], V);
   };
 
   auto backward = [&](const Value *V, BoundPredicateSet &C_OUT_B,
@@ -362,7 +351,7 @@ void RunModificationAnalysis(Function &F, CMap &C_IN, CMap &C_OUT, CMap &C_GEN,
       }
     } while (!stable);
 
-    llvm::errs() << "Stable after " << round << " rounds\n";
+    llvm::errs() << "Stable after " << round << " rounds (bkwd)\n";
   }
 }
 
@@ -456,6 +445,136 @@ void ApplyModification(Function &F, CMap &Grouped_C_OUT,
         CI->eraseFromParent();
       }
     }
+  }
+}
+
+void RunEliminationAnalysis(Function &F, CMap &C_IN, CMap &C_OUT, CMap &C_GEN,
+                            EffectMap &Effects,
+                            ValuePtrVector &ValuesReferencedInSubscript) {
+  auto EFFECT = [&](const BasicBlock *B, const Value *V) -> EffectOnSubscript {
+    return getEffect(Effects[V][B], V);
+  };
+
+  auto forward = [&](const Value *V, BoundPredicateSet &C_IN_B,
+                     const BasicBlock *B) -> BoundPredicateSet {
+#define KILL_CHECK break
+    BoundPredicateSet S{};
+    const auto &Effect = EFFECT(B, V);
+
+    for (auto &LBP : C_IN_B.LbPredicates) {
+      if (LBP.isIdentityCheck()) {
+        switch (Effect.kind) {
+        case EffectKind::Unchanged:
+        case EffectKind::Increment:
+        case EffectKind::Multiply:
+          S.addPredicate(LBP);
+          break;
+        case EffectKind::Decrement:
+        case EffectKind::UnknownChanged:
+          KILL_CHECK;
+        }
+      } else {
+        switch (Effect.kind) {
+        case EffectKind::Unchanged:
+          S.addPredicate(LBP);
+        case EffectKind::Decrement:
+          if (LBP.Index.increasesWhenVDecreases()) {
+            S.addPredicate(LBP);
+          }
+          break;
+        case EffectKind::Increment:
+        case EffectKind::Multiply:
+          if (LBP.Index.increasesWhenVIncreases()) {
+            S.addPredicate(LBP);
+          }
+          break;
+        case EffectKind::UnknownChanged:
+          KILL_CHECK;
+        }
+      }
+    }
+
+    for (auto &UBP : C_IN_B.UbPredicates) {
+      if (UBP.isIdentityCheck()) {
+        switch (Effect.kind) {
+        case EffectKind::Unchanged:
+        case EffectKind::Decrement:
+          S.addPredicate(UBP);
+          break;
+        case EffectKind::Increment:
+        case EffectKind::Multiply:
+        case EffectKind::UnknownChanged:
+          KILL_CHECK;
+        }
+      } else {
+        switch (Effect.kind) {
+        case EffectKind::Unchanged:
+          S.addPredicate(UBP);
+        case EffectKind::Increment:
+        case EffectKind::Multiply:
+          if (UBP.Index.decreasesWhenVIncreases()) {
+            S.addPredicate(UBP);
+          }
+          break;
+        case EffectKind::Decrement:
+          if (UBP.Index.decreasesWhenVDecreases()) {
+            S.addPredicate(UBP);
+          }
+          break;
+        case EffectKind::UnknownChanged:
+          KILL_CHECK;
+        }
+      }
+    }
+#undef KILL_CHECK
+    return S;
+  };
+
+  for (const Value *V : ValuesReferencedInSubscript) {
+    bool stable = false;
+    int round = 0;
+    auto assignIfChanged = [&stable](auto &A, auto B) {
+      if (A != B) {
+        A = B;
+        stable = false;
+      }
+    };
+    do {
+      stable = true;
+      round++;
+
+      SmallVector<const BasicBlock *, 32> WorkList{};
+      SmallPtrSet<const BasicBlock *, 32> Visited{};
+      WorkList.push_back(&F.getEntryBlock());
+
+      while (!WorkList.empty()) {
+
+        const auto *BB = WorkList.pop_back_val();
+
+        assignIfChanged(
+            C_OUT[V][BB],
+            BoundPredicateSet::Or({C_GEN[V][BB], forward(V, C_IN[V][BB], BB)}));
+
+        SmallVector<BoundPredicateSet, 4> predecessorPredicts = {};
+        if (pred_begin(BB) != pred_begin(BB)) {
+          for (const auto *Pred : predecessors(BB)) {
+            predecessorPredicts.push_back(C_OUT[V][Pred]);
+          }
+        }
+        assignIfChanged(C_IN[V][BB],
+                        BoundPredicateSet::And(predecessorPredicts));
+
+        Visited.insert(BB);
+        for (const auto *Succ : successors(BB)) {
+          if (Visited.find(Succ) == Visited.end()) {
+            WorkList.push_back(Succ);
+          }
+        }
+      }
+
+    } while (!stable);
+
+    llvm::errs() << "Stable after " << round << " rounds (fwd)\n";
   }
 }
 
