@@ -56,7 +56,7 @@ struct UpperBoundPredicate : public BoundPredicateBase {
   UpperBoundPredicate(SubscriptExpr Bound, SubscriptExpr Index)
       : BoundPredicateBase(Bound, Index) {}
 
-  void print(raw_ostream &O) const;
+  void print(raw_ostream &O, bool newLine = false) const;
 
   bool subsumes(const UpperBoundPredicate &Other) const;
   bool subsumes(const LowerBoundPredicate &Other) const;
@@ -66,7 +66,7 @@ struct LowerBoundPredicate : public BoundPredicateBase {
   LowerBoundPredicate(SubscriptExpr Bound, SubscriptExpr Index)
       : BoundPredicateBase(Bound, Index) {}
 
-  void print(raw_ostream &O) const;
+  void print(raw_ostream &O, bool newLine = false) const;
 
   bool subsumes(const UpperBoundPredicate &Other) const;
   bool subsumes(const LowerBoundPredicate &Other) const;

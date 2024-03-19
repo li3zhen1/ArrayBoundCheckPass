@@ -18,21 +18,28 @@ void BoundPredicateBase::normalize() {
 
 bool BoundPredicateBase::isNormalized() const { return Index.B == 0; }
 
-void LowerBoundPredicate::print(raw_ostream &O) const {
+void LowerBoundPredicate::print(raw_ostream &O, bool newLine) const {
   Bound.dump(GreenO);
   O << " ≤ ";
   Index.dump(RedO);
+  if (newLine) {
+    O << "\n";
+  }
 }
 
 bool BoundPredicateBase::isIdentityCheck() const {
   return Index.A == 1 && Index.B == 0;
 }
 
-void UpperBoundPredicate::print(raw_ostream &O) const {
+void UpperBoundPredicate::print(raw_ostream &O, bool newLine) const {
 
   Index.dump(RedO);
   O << " ≤ ";
   Bound.dump(GreenO);
+
+  if (newLine) {
+    O << "\n";
+  }
 }
 
 bool BoundPredicateBase::operator==(const BoundPredicateBase &Other) const {

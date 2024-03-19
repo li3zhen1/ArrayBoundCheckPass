@@ -9,6 +9,11 @@ void BoundPredicateSet::addPredicate(UpperBoundPredicate &P) {
   assert(P.isNormalized() && "Predicate not normalized!");
   auto PID = P.Index.getIdentity();
   if (const auto ID = getSubscriptIdentity()) {
+    if (PID != ID.value()) {
+      print(BLUE(llvm::errs()));
+      llvm::errs() << " <=> ";
+      P.print(BLUE(llvm::errs()));
+    }
     assert(PID == ID.value() && "Identity not match!");
   }
   const auto &ComparableBoundPredict =
@@ -32,6 +37,11 @@ void BoundPredicateSet::addPredicate(LowerBoundPredicate &P) {
   assert(P.isNormalized() && "Predicate not normalized!");
   auto PID = P.Index.getIdentity();
   if (const auto ID = getSubscriptIdentity()) {
+    if (PID != ID.value()) {
+      print(BLUE(llvm::errs()));
+      llvm::errs() << " <=> ";
+      P.print(BLUE(llvm::errs()));
+    }
     assert(PID == ID.value() && "Identity not match!");
   }
   const auto &ComparableBoundPredict =
@@ -263,7 +273,7 @@ bool BoundPredicateSet::subsumes(const LowerBoundPredicate &Other) const {
 }
 
 bool BoundPredicateSet::subsumes(const UpperBoundPredicate &Other) const {
-  
+
   return llvm::any_of(UbPredicates,
                       [&](const auto &It) { return It.subsumes(Other); });
 }
