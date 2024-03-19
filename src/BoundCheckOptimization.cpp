@@ -157,6 +157,12 @@ void RecomputeC_GEN(Function &F, CMap &Grouped_C_GEN,
       Grouped_C_GEN[V][B] = CG;
     }
   }
+
+  VERBOSE_PRINT {
+    BLUE(llvm::errs()) << "===================== C_GEN After modification "
+                          "===================== \n";
+    print(Grouped_C_GEN, (llvm::errs()), ValuesReferencedInBoundCheck);
+  }
 }
 
 void ComputeEffects(Function &F, CMap &Grouped_C_GEN, EffectMap &effects,
@@ -487,6 +493,25 @@ void ComputeEffects(Function &F, CMap &Grouped_C_GEN, EffectMap &effects,
     llvm::errs()
         << "===================== Grouped C_GEN ===================== \n";
     print(Grouped_C_GEN, (llvm::errs()), ValuesReferencedInBoundCheck);
+  }
+
+  VERBOSE_PRINT {
+    BLUE(llvm::errs())
+        << "===================== Effects ===================== \n";
+    for (const auto &[V, BB2SE] : effects) {
+      V->printAsOperand(llvm::errs());
+      llvm::errs() << "\n";
+      for (const auto &[BB, SE] : BB2SE) {
+        if (SE.empty())
+          continue;
+        BB->printAsOperand(llvm::errs());
+        llvm::errs() << ": ";
+        for (const auto &E : SE) {
+          E.dump(llvm::errs());
+        }
+        llvm::errs() << "\n";
+      }
+    }
   }
 }
 
@@ -1147,6 +1172,7 @@ PreservedAnalyses BoundCheckOptimization::run(Function &F,
   if (!isCProgram(F.getParent()) && isCxxSTLFunc(F.getName())) {
     return PreservedAnalyses::all();
   }
+  
   llvm::errs() << "BoundCheckOptimization\n";
 
   auto &Context = F.getContext();
@@ -1156,41 +1182,18 @@ PreservedAnalyses BoundCheckOptimization::run(Function &F,
   SourceFileName = F.getParent()->getNamedGlobal(SOURCE_FILE_NAME);
 
   CMap C_GEN{};
-
   EffectMap Effects{};
-
   ValueEvaluationCache Evaluated{};
-
   ValuePtrVector ValuesReferencedInSubscript = {};
   ValuePtrVector ValuesReferencedInBound = {};
 
+
+  /** Compute C_GEN, Effects, ValuesReferencedInSubscript, ValuesReferencedInBound */
   ComputeEffects(F, C_GEN, Effects, ValuesReferencedInSubscript,
                  ValuesReferencedInBound, Evaluated, SourceFileName);
 
-  VERBOSE_PRINT {
-    BLUE(llvm::errs())
-        << "===================== Effects ===================== \n";
-    for (const auto &[V, BB2SE] : Effects) {
-      V->printAsOperand(llvm::errs());
-      llvm::errs() << "\n";
-      for (const auto &[BB, SE] : BB2SE) {
-        if (SE.empty())
-          continue;
-        BB->printAsOperand(llvm::errs());
-        llvm::errs() << ": ";
-        for (const auto &E : SE) {
-          E.dump(llvm::errs());
-        }
-        llvm::errs() << "\n";
-      }
-    }
-  }
-
+  /** Modification Analysis */
   if (MODIFICATION) {
-    /**
-     * @brief Modification Analysis
-     *
-     */
     CMap C_IN{};
     CMap C_OUT{};
     InitializeToEmpty(F, C_IN, ValuesReferencedInSubscript);
@@ -1203,20 +1206,13 @@ PreservedAnalyses BoundCheckOptimization::run(Function &F,
                       SourceFileName, DT);
   }
 
-  C_GEN.clear();
-  RecomputeC_GEN(F, C_GEN, ValuesReferencedInSubscript, Evaluated);
-
-  VERBOSE_PRINT {
-    BLUE(llvm::errs()) << "===================== C_GEN After modification "
-                          "===================== \n";
-    print(C_GEN, (llvm::errs()), ValuesReferencedInSubscript);
+  { /** Update C_GEN */
+    C_GEN.clear();
+    RecomputeC_GEN(F, C_GEN, ValuesReferencedInSubscript, Evaluated);
   }
 
+  /** Elimination Analysis */
   if (ELIMINATION) {
-    /**
-     * @brief Elimination Analysis
-     *
-     */
     CMap C_IN{};
     CMap C_OUT{};
     InitializeToEmpty(F, C_IN, ValuesReferencedInSubscript);
@@ -1229,8 +1225,6 @@ PreservedAnalyses BoundCheckOptimization::run(Function &F,
   }
 
   // F.viewCFGOnly();
-
-  // dump all bb
 
   return PreservedAnalyses::none();
 }
