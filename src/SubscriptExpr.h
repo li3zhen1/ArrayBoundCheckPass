@@ -78,6 +78,8 @@ struct SubscriptExpr {
   // fallback) const;
 
   static SubscriptExpr getZero() { return {0, nullptr, 0}; }
+
+  int64_t getConstantDifference(const SubscriptExpr &rhs) const;
 };
 
 namespace std {

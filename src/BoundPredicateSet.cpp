@@ -50,6 +50,15 @@ void BoundPredicateSet::addPredicate(LowerBoundPredicate &&P) {
   addPredicate(P);
 }
 
+void BoundPredicateSet::addPredicateSet(BoundPredicateSet &P) {
+  for (auto &It : P.LbPredicates) {
+    addPredicate(It);
+  }
+  for (auto &It : P.UbPredicates) {
+    addPredicate(It);
+  }
+}
+
 void BoundPredicateSet::addPredicate(BoundPredicate &P) {
   if (auto *UB = get_if<UpperBoundPredicate>(&P)) {
     addPredicate(*UB);
@@ -140,11 +149,11 @@ BoundPredicateSet::And(SmallVector<BoundPredicateSet, 4> Sets) {
   bool isUbOpen = false;
   bool isLbOpen = false;
 
-  for (const auto &S_i : Sets) {
-    S_i.print(errs());
-    llvm::errs() << " AND ";
-  }
-  llvm::errs() << " = ";
+  // for (const auto &S_i : Sets) {
+  //   S_i.print(errs());
+  //   llvm::errs() << " AND ";
+  // }
+  // llvm::errs() << " = ";
 
   for (const auto &S : Sets) {
     if (S.LbPredicates.empty()) {
@@ -254,6 +263,7 @@ bool BoundPredicateSet::subsumes(const LowerBoundPredicate &Other) const {
 }
 
 bool BoundPredicateSet::subsumes(const UpperBoundPredicate &Other) const {
+  
   return llvm::any_of(UbPredicates,
                       [&](const auto &It) { return It.subsumes(Other); });
 }

@@ -165,3 +165,8 @@ bool SubscriptExpr::decreasesWhenVDecreases() const { return A > 0; }
 bool SubscriptExpr::increasesWhenVDecreases() const { return A < 0; }
 
 SubscriptIndentity SubscriptExpr::getIdentity() const { return {A, i}; }
+
+int64_t SubscriptExpr::getConstantDifference(const SubscriptExpr &rhs) const {
+  assert(getIdentity() == rhs.getIdentity());
+  return B - rhs.B;
+}

@@ -15,6 +15,7 @@ struct BoundPredicateSet {
   void addPredicate(LowerBoundPredicate &&P);
   void addPredicate(UpperBoundPredicate &&P);
   void addPredicate(BoundPredicate &P);
+  void addPredicateSet(BoundPredicateSet &P);
 
   SmallVector<BoundPredicate> getAllPredicates() const;
 
@@ -28,7 +29,7 @@ struct BoundPredicateSet {
 
   void print(raw_ostream &O) const;
 
-  bool operator==(const BoundPredicateSet &Other) const;\
+  bool operator==(const BoundPredicateSet &Other) const;
 
   bool isEmpty() const;
 
