@@ -70,17 +70,20 @@ Value *createValueForSubExpr(IRBuilder<> &IRB, Instruction *point,
   IRB.SetInsertPoint(point);
   if (SE.isConstant()) {
     return IRB.getInt64(SE.B);
-  } else if (SE.A == 1 && SE.B == 0) {
-    Value *V = (Value *)SE.i;
-    // if (isa<AllocaInst>(SE.i)) {
-    //   auto *AI = cast<AllocaInst>(SE.i);
-    //   if (!AI->getAllocatedType()->isIntegerTy(64)) {
-    //     V = IRB.CreateSExt(V, IRB.getInt64Ty());
-    //   }
-    // }
-    return IRB.CreateLoad(IRB.getInt64Ty(), V);
   } else {
-    Value *V = IRB.CreateLoad(IRB.getInt64Ty(), (Value *)SE.i);
+    Value *V = (Value *)SE.i;
+    auto VTy = V->getType();
+
+    if (VTy->isPointerTy()) {
+      V = IRB.CreatePtrToInt(V, IRB.getInt64Ty());
+    } else {
+      if (VTy->isIntegerTy(64)) {
+        V = V;
+      } else {
+        V = IRB.CreateIntCast(V, IRB.getInt64Ty(), true);
+      }
+    }
+
     if (SE.A != 1) {
       V = IRB.CreateMul(V, IRB.getInt64(SE.A));
     }
@@ -978,9 +981,6 @@ void ApplyElimination(Function &F, CMap &Grouped_C_IN, CMap &C_GEN,
           auto F = CB->getCalledFunction();
           auto FName = F->getName();
 
-          Inst.print(llvm::errs());
-          llvm::errs() << "\n";
-
           if (FName == CHECK_LB) {
             EXTRACT_VALUE {
               auto LBP = LowerBoundPredicate{BoundExpr, IndexExpr};
@@ -991,11 +991,15 @@ void ApplyElimination(Function &F, CMap &Grouped_C_IN, CMap &C_GEN,
                                [&](const LowerBoundPredicate &p) {
                                  return p.subsumes(LBP);
                                })) {
-                llvm::errs() << "Redundant check at ";
-                BB.printAsOperand(errs());
-                llvm::errs() << " : ";
-                LBP.print(errs());
-                llvm::errs() << "\n";
+                VERBOSE_PRINT {
+                  llvm::errs() << "Redundant check at ";
+                  BB.printAsOperand(errs());
+                  llvm::errs() << " : ";
+                  LBP.print(errs());
+                  llvm::errs() << " (";
+                  Inst.print(llvm::errs());
+                  llvm::errs() << ")\n";
+                }
 
                 RedundantCheck.push_back(&Inst);
               }
@@ -1010,12 +1014,15 @@ void ApplyElimination(Function &F, CMap &Grouped_C_IN, CMap &C_GEN,
                                [&](const UpperBoundPredicate &p) {
                                  return p.subsumes(UBP);
                                })) {
-                llvm::errs() << "Redundant check at ";
-                BB.printAsOperand(errs());
-                llvm::errs() << " : ";
-                UBP.print(errs());
-                llvm::errs() << "\n";
-
+                VERBOSE_PRINT {
+                  llvm::errs() << "Redundant check at ";
+                  BB.printAsOperand(errs());
+                  llvm::errs() << " : ";
+                  UBP.print(errs());
+                  llvm::errs() << " (";
+                  Inst.print(llvm::errs());
+                  llvm::errs() << ")\n";
+                }
                 RedundantCheck.push_back(&Inst);
               }
             }
@@ -1064,7 +1071,7 @@ PreservedAnalyses BoundCheckOptimization::run(Function &F,
         if (SE.empty())
           continue;
         BB->printAsOperand(llvm::errs());
-          llvm::errs() << ": ";
+        llvm::errs() << ": ";
         for (const auto &E : SE) {
           E.dump(llvm::errs());
         }
@@ -1117,6 +1124,17 @@ PreservedAnalyses BoundCheckOptimization::run(Function &F,
   }
 
   // F.viewCFGOnly();
+
+  // dump all bb
+  // for (auto &BB : F) {
+  //   llvm::errs() << "BB: ";
+  //   BB.printAsOperand(llvm::errs());
+  //   llvm::errs() << "\n";
+  //   for (auto &Inst : BB) {
+  //     Inst.print(llvm::errs());
+  //     llvm::errs() << "\n";
+  //   }
+  // }
 
   return PreservedAnalyses::none();
 }
