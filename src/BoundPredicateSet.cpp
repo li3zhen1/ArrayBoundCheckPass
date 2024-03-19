@@ -174,7 +174,16 @@ BoundPredicateSet::And(SmallVector<BoundPredicateSet, 4> Sets) {
                                                       LP.Index.getIdentity())) {
         _LP->Bound.B = std::min(_LP->Bound.B, LP.Bound.B);
       } else {
-        Result.LbPredicates.push_back(LP);
+        if (!Result.LbPredicates.empty()) {
+          llvm_unreachable("Incomparable LB predicates");
+          YELLOW(llvm::errs()) << "Meet incomparable predicates: ";
+          LP.print(YELLOW(llvm::errs()));
+          llvm::errs() << "\n";
+          YELLOW(llvm::errs()) << "Ignoring both";
+          isLbOpen = true;
+        } else {
+          Result.LbPredicates.push_back(LP);
+        }
       }
     }
 
@@ -186,7 +195,16 @@ BoundPredicateSet::And(SmallVector<BoundPredicateSet, 4> Sets) {
                                                       UP.Index.getIdentity())) {
         _UP->Bound.B = std::max(_UP->Bound.B, UP.Bound.B);
       } else {
-        Result.UbPredicates.push_back(UP);
+        if (!Result.UbPredicates.empty()) {
+          llvm_unreachable("Incomparable UB predicates");
+          YELLOW(llvm::errs()) << "Meet incomparable predicates: ";
+          UP.print(YELLOW(llvm::errs()));
+          llvm::errs() << "\n";
+          YELLOW(llvm::errs()) << "Ignoring both";
+          isLbOpen = true;
+        } else {
+          Result.UbPredicates.push_back(UP);
+        }
       }
     }
   }
@@ -277,12 +295,6 @@ bool BoundPredicateSet::subsumes(const UpperBoundPredicate &Other) const {
   return llvm::any_of(UbPredicates,
                       [&](const auto &It) { return It.subsumes(Other); });
 }
-
-
-
-
-
-
 
 void print(CMap &C, raw_ostream &O, const ValuePtrVector &ValueKeys) {
 

@@ -8,7 +8,6 @@
 
 using namespace llvm;
 
-
 Value *createValueForSubExpr(IRBuilder<> &IRB, Instruction *point,
                              const SubscriptExpr &SE) {
   IRB.SetInsertPoint(point);
@@ -19,13 +18,53 @@ Value *createValueForSubExpr(IRBuilder<> &IRB, Instruction *point,
     auto VTy = V->getType();
 
     if (VTy->isPointerTy()) {
-      V = IRB.CreatePtrToInt(V, IRB.getInt64Ty());
-    } else {
-      if (VTy->isIntegerTy(64)) {
-        V = V;
+      // https://llvm.org/docs/OpaquePointers.html
+
+      /**
+       * For loads, use getType().
+        For stores, use getValueOperand()->getType().
+        Use getLoadStoreType() to handle both of the above in one call.
+        For getelementptr instructions, use getSourceElementType().
+        For calls, use getFunctionType().
+        For allocas, use getAllocatedType().
+        For globals, use getValueType().
+        For consistency assertions, use
+       PointerType::isOpaqueOrPointeeTypeEquals().
+       *
+       */
+      Type *baseTy = nullptr;
+      if (isa<AllocaInst>(V)) {
+        baseTy = cast<AllocaInst>(V)->getAllocatedType();
+      } else if (isa<LoadInst>(V)) {
+        baseTy = cast<LoadInst>(V)->getType();
+      } else if (isa<StoreInst>(V)) {
+        baseTy = cast<StoreInst>(V)->getValueOperand()->getType();
+      } else if (isa<GetElementPtrInst>(V)) {
+        baseTy = cast<GetElementPtrInst>(V)->getSourceElementType();
+      } else if (isa<CallInst>(V)) {
+        baseTy = cast<CallInst>(V)->getFunctionType();
       } else {
-        V = IRB.CreateIntCast(V, IRB.getInt64Ty(), true);
+        llvm_unreachable("Unsupported pointer type while creating value for "
+                         "subscript expression");
       }
+
+      VTy = baseTy;
+
+      if (VTy->isIntegerTy()) {
+        V = IRB.CreateLoad(VTy, V);
+      } else {
+        llvm_unreachable("Unsupported pointer type while creating value for "
+                         "subscript expression");
+      }
+    }
+
+    if (VTy->isIntegerTy(64)) {
+      V = V;
+    } else if (VTy->isIntegerTy()) {
+      V = IRB.CreateIntCast(V, IRB.getInt64Ty(), true);
+    } else {
+      llvm_unreachable("Unsupported type while creating value for subscript "
+                       "expression");
     }
 
     if (SE.A != 1) {
@@ -637,8 +676,8 @@ void RunModificationAnalysis(Function &F, CMap &C_IN, CMap &C_OUT, CMap &C_GEN,
     BLUE(llvm::errs())
         << "===================== Modification C_IN ===================== \n";
     print(C_IN, (llvm::errs()), ValuesReferencedInSubscript);
-    BLUE(llvm::errs())
-        << "===================== Modification C_OUT ===================== \n";
+    BLUE(llvm::errs()) << "===================== Modification C_OUT "
+                          "===================== \n";
     print(C_OUT, (llvm::errs()), ValuesReferencedInSubscript);
   }
 }
@@ -647,8 +686,8 @@ void ApplyModification(Function &F, CMap &Grouped_C_OUT, CMap &C_GEN,
                        ValuePtrVector &ValuesReferencedInSubscript,
                        ValueEvaluationCache &Evaluated, Constant *file) {
   VERBOSE_PRINT {
-    BLUE(llvm::errs())
-        << "===================== Apply Modification ===================== \n";
+    BLUE(llvm::errs()) << "===================== Apply Modification "
+                          "===================== \n";
   }
   LLVMContext &Context = F.getContext();
   Instruction *InsertPoint = F.getEntryBlock().getFirstNonPHI();
@@ -1168,8 +1207,9 @@ PreservedAnalyses BoundCheckOptimization::run(Function &F,
   // F.viewCFGOnly();
 
   // dump all bb
+
   // for (auto &BB : F) {
-  //   llvm::errs() << "BB: ";
+  //   // llvm::errs() << "BB: ";
   //   BB.printAsOperand(llvm::errs());
   //   llvm::errs() << "\n";
   //   for (auto &Inst : BB) {

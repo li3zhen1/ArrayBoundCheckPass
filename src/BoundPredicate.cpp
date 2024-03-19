@@ -58,7 +58,11 @@ bool UpperBoundPredicate::subsumes(const UpperBoundPredicate &Other) const {
   }
 
   if (!Bound.isConstant() && !Other.Bound.isConstant()) {
-    assert(Bound.i == Other.Bound.i);
+    if(Bound.i != Other.Bound.i) {
+      Bound.dump(YELLOW(llvm::errs()));
+      Other.Bound.dump(YELLOW(llvm::errs()));
+      llvm_unreachable("Unimplemented subsume case");
+    }
     if (Bound.A == Other.Bound.A) {
       return Bound.B <= Other.Bound.B;
     }
