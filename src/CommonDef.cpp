@@ -54,3 +54,8 @@ bool isCProgram(Module *M) {
 raw_ostream &verboseOut() {
   return IsVerbose ? errs() : nulls();
 }
+
+
+
+
+

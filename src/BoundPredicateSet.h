@@ -39,3 +39,19 @@ struct BoundPredicateSet {
 private:
   BoundPredicate getFirstItem() const;
 };
+
+using BoundCheckSetList = SmallVector<BoundPredicateSet>;
+
+using CMap =
+    DenseMap<const Value *, DenseMap<const BasicBlock *, BoundPredicateSet>>;
+
+using ValuePtrVector = SmallVector<const Value *, 32>;
+
+using EffectMap =
+    DenseMap<const Value *,
+             DenseMap<const BasicBlock *, SmallVector<SubscriptExpr>>>;
+
+using ValueEvaluationCache = DenseMap<const Value *, SubscriptExpr>;
+
+void print(CMap &C, raw_ostream &O, const ValuePtrVector &ValueKeys);
+void InitializeToEmpty(Function &F, CMap &C, const ValuePtrVector &ValueKeys);

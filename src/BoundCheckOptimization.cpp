@@ -4,66 +4,10 @@
 #include "CommonDef.h"
 #include "Effect.h"
 #include "SubscriptExpr.h"
-#include <cstddef>
 #include <utility>
 
 using namespace llvm;
 
-using BoundCheckSetList = SmallVector<BoundPredicateSet>;
-
-using CMap =
-    DenseMap<const Value *, DenseMap<const BasicBlock *, BoundPredicateSet>>;
-
-using ValuePtrVector = SmallVector<const Value *, 32>;
-
-using EffectMap =
-    DenseMap<const Value *,
-             DenseMap<const BasicBlock *, SmallVector<SubscriptExpr>>>;
-
-using ValueEvaluationCache = DenseMap<const Value *, SubscriptExpr>;
-
-void print(CMap &C, raw_ostream &O, const ValuePtrVector &ValueKeys) {
-
-  for (const auto *V : ValueKeys) {
-    O << "----------------- Value: ";
-    V->printAsOperand(O);
-    O << "----------------- \n";
-    for (const auto &BB2SE : C[V]) {
-      if (BB2SE.second.isEmpty()) {
-        continue;
-      }
-      BB2SE.first->printAsOperand(O);
-      O << "\n";
-      if (!BB2SE.second.isEmpty()) {
-        BB2SE.second.print(O);
-      }
-    }
-    O << "\n";
-  }
-
-  // for (auto &[V, BB2SE] : C) {
-  //   O << "----------------- Value: ";
-  //   V->printAsOperand(O);
-  //   O << "----------------- \n";
-  //   for (auto &[BB, SE] : BB2SE) {
-  //     BB->printAsOperand(O);
-  //     O << "\n";
-  //     if (!SE.isEmpty()) {
-  //       SE.print(O);
-  //     }
-  //   }
-  //   O << "\n";
-  // }
-}
-
-void InitializeToEmpty(Function &F, CMap &C, const ValuePtrVector &ValueKeys) {
-  for (const auto *V : ValueKeys) {
-    C[V] = DenseMap<const BasicBlock *, BoundPredicateSet>{};
-    for (const auto &BB : F) {
-      C[V][&BB] = {};
-    }
-  }
-}
 
 Value *createValueForSubExpr(IRBuilder<> &IRB, Instruction *point,
                              const SubscriptExpr &SE) {
@@ -94,21 +38,18 @@ Value *createValueForSubExpr(IRBuilder<> &IRB, Instruction *point,
   }
 };
 
-CallInst *createCheckCall(IRBuilder<> &IRB, Instruction *afterPoint,
+CallInst *createCheckCall(IRBuilder<> &IRB, Instruction *point,
                           FunctionCallee Check, Value *bound, Value *subscript,
                           Constant *file) {
   Value *ln;
-  if (const auto Loc = afterPoint->getDebugLoc()) {
+  if (const auto Loc = point->getDebugLoc()) {
     ln = IRB.getInt64(Loc.getLine());
   } else {
     ln = IRB.getInt64(0);
   }
-  // IRB.SetInsertPoint(afterPoint->getNextNode());
-
+  IRB.SetInsertPoint(point);
   return IRB.CreateCall(Check, {bound, subscript, file, ln});
 };
-
-void liftBoundChecks() {}
 
 void RecomputeC_GEN(Function &F, CMap &Grouped_C_GEN,
                     const ValuePtrVector &ValuesReferencedInBoundCheck,
@@ -176,8 +117,6 @@ void ComputeEffects(Function &F, CMap &Grouped_C_GEN, EffectMap &effects,
 
   LLVMContext &Context = F.getContext();
   IRBuilder<> IRB(Context);
-
-  // SmallDenseMap<const BasicBlock *, BoundPredicateSet> C_GEN{};
 
   using EarliestUBCheckMap =
       SmallDenseMap<SubscriptIndentity,

@@ -277,3 +277,38 @@ bool BoundPredicateSet::subsumes(const UpperBoundPredicate &Other) const {
   return llvm::any_of(UbPredicates,
                       [&](const auto &It) { return It.subsumes(Other); });
 }
+
+
+
+
+
+
+
+void print(CMap &C, raw_ostream &O, const ValuePtrVector &ValueKeys) {
+
+  for (const auto *V : ValueKeys) {
+    O << "----------------- Value: ";
+    V->printAsOperand(O);
+    O << "----------------- \n";
+    for (const auto &BB2SE : C[V]) {
+      if (BB2SE.second.isEmpty()) {
+        continue;
+      }
+      BB2SE.first->printAsOperand(O);
+      O << "\n";
+      if (!BB2SE.second.isEmpty()) {
+        BB2SE.second.print(O);
+      }
+    }
+    O << "\n";
+  }
+}
+
+void InitializeToEmpty(Function &F, CMap &C, const ValuePtrVector &ValueKeys) {
+  for (const auto *V : ValueKeys) {
+    C[V] = DenseMap<const BasicBlock *, BoundPredicateSet>{};
+    for (const auto &BB : F) {
+      C[V][&BB] = {};
+    }
+  }
+}
