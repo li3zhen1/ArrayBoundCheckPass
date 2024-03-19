@@ -103,15 +103,15 @@ PreservedAnalyses BoundCheckInsertion::run(Function &F,
   }
 
 
-  for (auto &BB : F) {
-    // llvm::errs() << "BB: ";
-    BB.printAsOperand(llvm::errs());
-    llvm::errs() << "\n";
-    for (auto &Inst : BB) {
-      Inst.print(llvm::errs());
-      llvm::errs() << "\n";
-    }
-  }
+  // for (auto &BB : F) {
+  //   // llvm::errs() << "BB: ";
+  //   BB.printAsOperand(llvm::errs());
+  //   llvm::errs() << "\n";
+  //   for (auto &Inst : BB) {
+  //     Inst.print(llvm::errs());
+  //     llvm::errs() << "\n";
+  //   }
+  // }
   return PreservedAnalyses::none();
 }
 

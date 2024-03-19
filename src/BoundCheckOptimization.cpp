@@ -864,7 +864,6 @@ void ApplyModification(Function &F, CMap &Grouped_C_OUT, CMap &C_GEN,
 
       auto *trailingInsertPoint = BB.getTerminator(); //->getPrevNode();
 
-      bool hasPhiNode = false;
       VERBOSE_PRINT {
         if ((hasUpperBound || hasLowerBound) && trailingInsertPoint) {
 
@@ -872,12 +871,11 @@ void ApplyModification(Function &F, CMap &Grouped_C_OUT, CMap &C_GEN,
                           "C_OUT has some\n\t";
           trailingInsertPoint->print(llvm::errs());
           llvm::errs() << "\n";
-          if (llvm::any_of(BB,
-                           [&](Instruction &I) { return isa<PHINode>(I); })) {
-            llvm::errs() << "PHI NODES\n";
-            hasPhiNode = true;
-            BB.print(llvm::errs());
-          }
+          // if (llvm::any_of(BB,
+          //                  [&](Instruction &I) { return isa<PHINode>(I); })) {
+          //   llvm::errs() << "PHI NODES\n";
+          //   BB.print(llvm::errs());
+          // }
           llvm::errs() << "\n";
           llvm::errs() << "\n";
         }
@@ -909,12 +907,6 @@ void ApplyModification(Function &F, CMap &Grouped_C_OUT, CMap &C_GEN,
                 createValueForSubExpr(IRB, trailingInsertPoint, (LBP.Index));
             createCheckCall(IRB, trailingInsertPoint, CheckLower, bound,
                             subscript, file);
-          }
-        }
-        if (hasPhiNode) {
-          VERBOSE_PRINT {
-            llvm::errs() << "==>\n";
-            BB.print(llvm::errs());
           }
         }
       }
@@ -1172,7 +1164,7 @@ PreservedAnalyses BoundCheckOptimization::run(Function &F,
   if (!isCProgram(F.getParent()) && isCxxSTLFunc(F.getName())) {
     return PreservedAnalyses::all();
   }
-  
+
   llvm::errs() << "BoundCheckOptimization\n";
 
   auto &Context = F.getContext();
@@ -1223,8 +1215,6 @@ PreservedAnalyses BoundCheckOptimization::run(Function &F,
 
     ApplyElimination(F, C_IN, C_GEN, ValuesReferencedInSubscript);
   }
-
-  // F.viewCFGOnly();
 
   return PreservedAnalyses::none();
 }
