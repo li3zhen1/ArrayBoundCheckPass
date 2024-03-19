@@ -103,12 +103,71 @@ CallInst *createCheckCall(IRBuilder<> &IRB, Instruction *afterPoint,
   } else {
     ln = IRB.getInt64(0);
   }
-  IRB.SetInsertPoint(afterPoint->getNextNode());
+  // IRB.SetInsertPoint(afterPoint->getNextNode());
 
   return IRB.CreateCall(Check, {bound, subscript, file, ln});
 };
 
 void liftBoundChecks() {}
+
+void RecomputeC_GEN(Function &F, CMap &Grouped_C_GEN,
+                    const ValuePtrVector &ValuesReferencedInBoundCheck,
+                    ValueEvaluationCache &Evaluated) {
+
+  InitializeToEmpty(F, Grouped_C_GEN, ValuesReferencedInBoundCheck);
+
+  auto getOrEvaluateSubExpr = [&](const Value *V) -> SubscriptExpr {
+    if (Evaluated.find(V) != Evaluated.end()) {
+      return Evaluated[V];
+    } else {
+      auto SE = SubscriptExpr::evaluate(V);
+      Evaluated[V] = SE;
+      return SE;
+    }
+  };
+
+  for (auto *V : ValuesReferencedInBoundCheck) {
+
+    SmallDenseMap<const BasicBlock *, BoundPredicateSet> C_GEN{};
+
+    for (auto &BB : F) {
+
+      for (Instruction &Inst : BB) {
+        if (isa<CallInst>(Inst)) {
+
+          const auto CB = cast<CallInst>(&Inst);
+          const auto F = CB->getCalledFunction();
+          auto FName = F->getName();
+
+          if (FName != CHECK_LB && FName != CHECK_UB)
+            continue;
+          const Value *bound = CB->getArgOperand(0);
+          const Value *checked = CB->getArgOperand(1);
+
+          const SubscriptExpr BoundExpr = getOrEvaluateSubExpr(bound);
+          const SubscriptExpr SubExpr = getOrEvaluateSubExpr(checked);
+
+          if (SubExpr.i != V) {
+            continue;
+          }
+
+          if (F->getName() == CHECK_UB) {
+            auto UBP = UpperBoundPredicate{BoundExpr, SubExpr};
+            UBP.normalize();
+            C_GEN[&BB].addPredicate(UBP);
+          } else if (F->getName() == CHECK_LB) {
+            auto LBP = LowerBoundPredicate{BoundExpr, SubExpr};
+            LBP.normalize();
+            C_GEN[&BB].addPredicate(LBP);
+          }
+        }
+      }
+    }
+    for (const auto &[B, CG] : C_GEN) {
+      Grouped_C_GEN[V][B] = CG;
+    }
+  }
+}
 
 void ComputeEffects(Function &F, CMap &Grouped_C_GEN, EffectMap &effects,
                     ValuePtrVector &ValuesReferencedInBoundCheck,
@@ -617,10 +676,6 @@ void RunModificationAnalysis(Function &F, CMap &C_IN, CMap &C_OUT, CMap &C_GEN,
         SmallVector<BoundPredicateSet, 4> successorPredicts = {};
 
         for (const auto *Succ : successors(BB)) {
-          // ONFLIGHT_PRINT {
-          //   Succ->printAsOperand(YELLOW(llvm::errs()));
-          //   llvm::errs() << "\n";
-          // }
           successorPredicts.push_back(C_IN[V][Succ]);
         }
 
@@ -652,7 +707,10 @@ void RunModificationAnalysis(Function &F, CMap &C_IN, CMap &C_OUT, CMap &C_GEN,
 void ApplyModification(Function &F, CMap &Grouped_C_OUT, CMap &C_GEN,
                        ValuePtrVector &ValuesReferencedInSubscript,
                        ValueEvaluationCache &Evaluated, Constant *file) {
-
+  VERBOSE_PRINT {
+    BLUE(llvm::errs())
+        << "===================== Apply Modification ===================== \n";
+  }
   LLVMContext &Context = F.getContext();
   Instruction *InsertPoint = F.getEntryBlock().getFirstNonPHI();
   IRBuilder<> IRB(InsertPoint);
@@ -728,10 +786,27 @@ void ApplyModification(Function &F, CMap &Grouped_C_OUT, CMap &C_GEN,
               constantDiffOfBound -= constantDiffOfIndex;
 
               if (constantDiffOfBound != 0) {
+
+                VERBOSE_PRINT {
+                  llvm::errs() << "Modify check based on tighter C_OUT: \n\t";
+                  CB->print(llvm::errs());
+                  llvm::errs() << " (";
+                  UBP.print(llvm::errs());
+                  llvm::errs() << ")\n";
+                }
+
                 IRB.SetInsertPoint(CB);
                 Value *newBoundValue = IRB.CreateAdd(
                     CB->getArgOperand(0), IRB.getInt64(constantDiffOfBound));
                 CB->setArgOperand(0, newBoundValue);
+
+                VERBOSE_PRINT {
+                  YELLOW(llvm::errs()) << "\t  => ";
+                  CB->print(llvm::errs());
+                  llvm::errs() << " (";
+                  tighterBound.print(llvm::errs());
+                  llvm::errs() << ")\n";
+                }
               }
             }
 
@@ -747,7 +822,7 @@ void ApplyModification(Function &F, CMap &Grouped_C_OUT, CMap &C_GEN,
                               [&](const auto &It) { return It.subsumes(LBP); });
 
             if (tighterBoundIfExists != C_OUT[&BB].LbPredicates.end()) {
-              auto tighterBound = *tighterBoundIfExists;
+              auto &tighterBound = *tighterBoundIfExists;
               auto constantDiffOfIndex =
                   tighterBound.Index.getConstantDifference(LBP.Index);
               auto constantDiffOfBound =
@@ -758,19 +833,44 @@ void ApplyModification(Function &F, CMap &Grouped_C_OUT, CMap &C_GEN,
               // always reuse the index value
 
               if (constantDiffOfBound != 0) {
+                VERBOSE_PRINT {
+                  llvm::errs() << "Modify check based on tighter C_OUT: \n\t";
+                  CB->print(llvm::errs());
+                  llvm::errs() << " (";
+                  LBP.print(llvm::errs());
+                  llvm::errs() << ")\n";
+                }
+
                 IRB.SetInsertPoint(CB);
                 Value *newBoundValue = IRB.CreateAdd(
                     CB->getArgOperand(0), IRB.getInt64(constantDiffOfBound));
                 CB->setArgOperand(0, newBoundValue);
+
+                VERBOSE_PRINT {
+                  YELLOW(llvm::errs()) << "\t  => ";
+                  CB->print(llvm::errs());
+                  llvm::errs() << " (";
+                  tighterBound.print(llvm::errs());
+                  llvm::errs() << ")\n";
+                }
               }
             }
           }
         }
       }
 
-      auto *trailingInsertPoint = BB.getTerminator()->getPrevNode();
+      auto *trailingInsertPoint = BB.getTerminator(); //->getPrevNode();
+      VERBOSE_PRINT {
+        if (hasUpperBound || hasLowerBound) {
 
+          llvm::errs() << "Modify check because this block has no checks but "
+                          "C_OUT has some\n\t";
+          trailingInsertPoint->print(llvm::errs());
+          llvm::errs() << "\n";
+        }
+      }
       if (trailingInsertPoint) {
+
         if (!hasUpperBound) {
           for (auto &UBP : C_OUT[&BB].UbPredicates) {
             Value *bound =
@@ -967,6 +1067,9 @@ void ApplyElimination(Function &F, CMap &Grouped_C_IN, CMap &C_GEN,
   SubscriptExpr IndexExpr = SubscriptExpr::evaluate(IndexValue);               \
   if (IndexExpr.i == V)
 
+  BLUE(llvm::errs())
+      << "===================== Apply Elimination ===================== \n";
+
   SmallVector<Instruction *, 32> RedundantCheck = {};
   for (const auto *V : ValuesReferencedInSubscript) {
     auto &&C_IN = Grouped_C_IN[V];
@@ -996,7 +1099,7 @@ void ApplyElimination(Function &F, CMap &Grouped_C_IN, CMap &C_GEN,
                   BB.printAsOperand(errs());
                   llvm::errs() << " : ";
                   LBP.print(errs());
-                  llvm::errs() << " (";
+                  llvm::errs() << "\t(";
                   Inst.print(llvm::errs());
                   llvm::errs() << ")\n";
                 }
@@ -1019,7 +1122,8 @@ void ApplyElimination(Function &F, CMap &Grouped_C_IN, CMap &C_GEN,
                   BB.printAsOperand(errs());
                   llvm::errs() << " : ";
                   UBP.print(errs());
-                  llvm::errs() << " (";
+                  llvm::errs() << "\t(";
+                  Inst.getDebugLoc().print(llvm::errs());
                   Inst.print(llvm::errs());
                   llvm::errs() << ")\n";
                 }
@@ -1098,8 +1202,7 @@ PreservedAnalyses BoundCheckOptimization::run(Function &F,
   }
 
   C_GEN.clear();
-  ComputeEffects(F, C_GEN, Effects, ValuesReferencedInSubscript,
-                 ValuesReferencedInBound, Evaluated, SourceFileName);
+  RecomputeC_GEN(F, C_GEN, ValuesReferencedInSubscript, Evaluated);
 
   VERBOSE_PRINT {
     BLUE(llvm::errs()) << "===================== C_GEN After modification "
