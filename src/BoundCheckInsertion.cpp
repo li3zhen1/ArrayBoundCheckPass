@@ -54,16 +54,15 @@ PreservedAnalyses BoundCheckInsertion::run(Function &F,
         Value *Bound =
             cast<ValueAsMetadata>(MN->getOperand(1).get())->getValue();
 
+        // llvm::errs() << "Unknown GEP type: ";
+        // GEP->print(llvm::errs());
         Value *subscript = nullptr;
         if (GEP->getSourceElementType()->isArrayTy()) {
-          subscript = GEP->getOperand(2);
+          subscript = GEP->getOperand(GEP->getNumIndices());
         } else if (GEP->getSourceElementType()->isIntegerTy()) {
           subscript = GEP->getOperand(1);
         } else {
-
-          // GEP->print(errs());
-          subscript = GEP->getOperand(1);
-          // throw std::runtime_error("Unknown GEP type.");
+          subscript = GEP->getOperand(GEP->getNumIndices());
         }
 
         createCheckBoundCall(&I, Bound, subscript);
@@ -100,6 +99,17 @@ PreservedAnalyses BoundCheckInsertion::run(Function &F,
         //   llvm_unreachable("Unknown Bound type.");
         // }
       }
+    }
+  }
+
+
+  for (auto &BB : F) {
+    // llvm::errs() << "BB: ";
+    BB.printAsOperand(llvm::errs());
+    llvm::errs() << "\n";
+    for (auto &Inst : BB) {
+      Inst.print(llvm::errs());
+      llvm::errs() << "\n";
     }
   }
   return PreservedAnalyses::none();

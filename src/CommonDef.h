@@ -3,8 +3,8 @@
 
 #include "llvm/IR/Metadata.h"
 #include "llvm/IR/Module.h"
-#include "llvm/Support/raw_ostream.h"
 #include "llvm/Support/WithColor.h"
+#include "llvm/Support/raw_ostream.h"
 #include <cstdint>
 
 extern const char *ACCESS_KEY;
@@ -19,14 +19,15 @@ constexpr auto CHECK_UB = "checkUpperBound";
 
 #define VERBOSE_PRINT if (true)
 
+constexpr bool MODIFICATION = true;
+constexpr bool ELIMINATION = true;
 
 #define RedO llvm::WithColor(O).changeColor(raw_ostream::RED, true, false)
 #define GreenO llvm::WithColor(O).changeColor(raw_ostream::GREEN, true, false)
 
 #define BLUE(O) llvm::WithColor(O).changeColor(raw_ostream::BLUE, true, false)
-#define YELLOW(O) llvm::WithColor(O).changeColor(raw_ostream::YELLOW, true, false)
-
-
+#define YELLOW(O)                                                              \
+  llvm::WithColor(O).changeColor(raw_ostream::YELLOW, true, false)
 
 // #undef _DEBUG_PRINT
 
@@ -41,8 +42,6 @@ enum ArrayCategory : unsigned {
 //     "multi-dimensional array",
 //     "dynamically allocated array"
 // };
-
-
 
 bool isCxxSTLFunc(llvm::StringRef Name);
 
