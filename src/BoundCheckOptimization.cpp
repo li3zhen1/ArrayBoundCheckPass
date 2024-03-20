@@ -872,7 +872,8 @@ void ApplyModification(Function &F, CMap &Grouped_C_OUT, CMap &C_GEN,
           trailingInsertPoint->print(llvm::errs());
           llvm::errs() << "\n";
           // if (llvm::any_of(BB,
-          //                  [&](Instruction &I) { return isa<PHINode>(I); })) {
+          //                  [&](Instruction &I) { return isa<PHINode>(I); }))
+          //                  {
           //   llvm::errs() << "PHI NODES\n";
           //   BB.print(llvm::errs());
           // }
@@ -1159,6 +1160,88 @@ void ApplyElimination(Function &F, CMap &Grouped_C_IN, CMap &C_GEN,
 #undef EXTRACT_VALUE
 }
 
+void LoopCheckPropagation(Function &F,
+                          ValuePtrVector &ValuesReferencedInSubscript,
+                          LoopInfo &LI) {
+  VERBOSE_PRINT {
+    llvm::errs() << "===================== Loop Check Propagation "
+                    "===================== \n";
+  }
+
+  struct HoistResult {
+    bool isInvariantNow;
+    Instruction *HoistedInst;
+  };
+
+  // const auto isLoopInvariantOrSuccessfullyMakeItSo =
+  //     [&](Loop *L, Value *V) -> HoistResult {
+  //   if (L->isLoopInvariant(V))
+  //     return {true, nullptr};
+  //   if (isa<Instruction>(V)) {
+  //     auto *I = cast<Instruction>(V);
+  //     if (!L->contains(I))
+  //       return {false, nullptr};
+  //     bool canMakeInvariant = false;
+  //     Instruction *HoistedInst = nullptr;
+  //     L->makeLoopInvariant(V, canMakeInvariant, HoistedInst);
+  //     return {canMakeInvariant, HoistedInst};
+  //   }
+  //   return {false, nullptr};
+  // };
+
+  enum class LoopInvariance : unsigned char {
+    Invariant,
+    DependencyInvariant,
+    NotInvariant,
+  };
+
+  const auto getInvariance = [&](Loop *L, Value *V) -> LoopInvariance {
+    if (L->isLoopInvariant(V))
+      return LoopInvariance::Invariant;
+    const SubscriptExpr SE = SubscriptExpr::evaluate(V);
+    if (SE.i == nullptr) {
+      return LoopInvariance::Invariant;
+    }
+    if (L->isLoopInvariant(SE.i)) {
+      return LoopInvariance::DependencyInvariant;
+    }
+    return LoopInvariance::NotInvariant;
+  };
+
+  SmallVector<CallInst *, 32> obsoleteChecks = {};
+
+  for (auto *L : LI) {
+    for (auto *BB : L->blocks()) {
+      for (auto &Inst : *BB) {
+        if (!isa<CallInst>(Inst))
+          continue;
+        auto CB = cast<CallInst>(&Inst);
+        auto F = CB->getCalledFunction();
+        auto FName = F->getName();
+        if (FName != CHECK_UB && FName != CHECK_LB)
+          continue;
+
+        Value *bound = CB->getArgOperand(0);
+        Value *subscript = CB->getArgOperand(1);
+
+        if (getInvariance(L, bound) != LoopInvariance::NotInvariant &&
+            getInvariance(L, subscript) != LoopInvariance::NotInvariant) {
+          obsoleteChecks.push_back(CB);
+        }
+      }
+    }
+  }
+
+  VERBOSE_PRINT {
+    llvm::errs() << "Removing checks due to loop invariants: "
+                 << obsoleteChecks.size() << "\n";
+  }
+
+  for (auto *CI : obsoleteChecks) {
+    CI->eraseFromParent();
+  }
+};
+
 PreservedAnalyses BoundCheckOptimization::run(Function &F,
                                               FunctionAnalysisManager &FAM) {
   if (!isCProgram(F.getParent()) && isCxxSTLFunc(F.getName())) {
@@ -1171,6 +1254,7 @@ PreservedAnalyses BoundCheckOptimization::run(Function &F,
   auto InsertPoint = F.getEntryBlock().getFirstNonPHI();
   IRBuilder<> IRB(InsertPoint);
   auto &DT = FAM.getResult<DominatorTreeAnalysis>(F);
+  auto &LI = FAM.getResult<LoopAnalysis>(F);
   SourceFileName = F.getParent()->getNamedGlobal(SOURCE_FILE_NAME);
 
   CMap C_GEN{};
@@ -1179,8 +1263,8 @@ PreservedAnalyses BoundCheckOptimization::run(Function &F,
   ValuePtrVector ValuesReferencedInSubscript = {};
   ValuePtrVector ValuesReferencedInBound = {};
 
-
-  /** Compute C_GEN, Effects, ValuesReferencedInSubscript, ValuesReferencedInBound */
+  /** Compute C_GEN, Effects, ValuesReferencedInSubscript,
+   * ValuesReferencedInBound */
   ComputeEffects(F, C_GEN, Effects, ValuesReferencedInSubscript,
                  ValuesReferencedInBound, Evaluated, SourceFileName);
 
@@ -1214,6 +1298,10 @@ PreservedAnalyses BoundCheckOptimization::run(Function &F,
                            ValuesReferencedInSubscript);
 
     ApplyElimination(F, C_IN, C_GEN, ValuesReferencedInSubscript);
+  }
+
+  if (LOOP_PROPAGATION) {
+    LoopCheckPropagation(F, ValuesReferencedInSubscript, LI);
   }
 
   return PreservedAnalyses::none();

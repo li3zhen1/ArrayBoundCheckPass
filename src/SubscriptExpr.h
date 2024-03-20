@@ -96,4 +96,6 @@ template <> struct hash<SubscriptExpr> {
 } // namespace std
 
 
+const Value* findEarliestLoadLike(const Value *v);
+
 #endif

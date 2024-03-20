@@ -122,6 +122,92 @@ SubscriptExpr SubscriptExpr::evaluate(const Value *v) {
   }
 }
 
+
+
+
+const Value *findEarliestLoadLike(const Value *v) {
+#if _DEBUG_PRINT
+  llvm::errs() << "Evaluating ";
+  v->print(errs());
+  llvm::errs() << "\n";
+#endif
+
+  if (isa<SExtInst>(v)) {
+    return findEarliestLoadLike(cast<SExtInst>(v)->getOperand(0));
+  } else if (isa<ZExtInst>(v)) {
+    return findEarliestLoadLike(cast<ZExtInst>(v)->getOperand(0));
+  } else if (isa<LoadInst>(v)) {
+    return cast<LoadInst>(v)->getPointerOperand();
+  } else if (isa<AddOperator>(v)) {
+    const auto AO = cast<AddOperator>(v);
+    const auto Op1 = AO->getOperand(0);
+    const auto Op2 = AO->getOperand(1);
+
+    auto* s1 = findEarliestLoadLike(Op1);
+    auto* s2 = findEarliestLoadLike(Op2);
+
+    if (s1 == nullptr) {
+      if (s2 == nullptr) {
+        return nullptr;
+      } else {
+        return s2;
+      }
+    } else if (s2 == nullptr) {
+      return s1;
+    } else {
+      return nullptr;
+    }
+
+  } else if (isa<SubOperator>(v)) {
+    const auto AO = cast<SubOperator>(v);
+    const auto Op1 = AO->getOperand(0);
+    const auto Op2 = AO->getOperand(1);
+
+    auto* s1 = findEarliestLoadLike(Op1);
+    auto* s2 = findEarliestLoadLike(Op2);
+
+    if (s1 == nullptr) {
+      if (s2 == nullptr) {
+        return nullptr;
+      } else {
+        return s2;
+      }
+    } else if (s2 == nullptr) {
+      return s1;
+    } else {
+      return nullptr;
+    }
+
+  } else if (isa<MulOperator>(v)) {
+    const auto MO = cast<MulOperator>(v);
+    const auto Op1 = MO->getOperand(0);
+    const auto Op2 = MO->getOperand(1);
+
+    auto* s1 = findEarliestLoadLike(Op1);
+    auto* s2 = findEarliestLoadLike(Op2);
+
+    if (s1 == nullptr) {
+      if (s2 == nullptr) {
+        return nullptr;
+      } else {
+        return s2;
+      }
+    } else if (s2 == nullptr) {
+      return s1;
+    } else {
+      return nullptr;
+    }
+
+  } else if (isa<ConstantInt>(v)) {
+    int64_t B = cast<ConstantInt>(v)->getSExtValue();
+    return v;
+  } else {
+    // noundef?
+    return v;
+  }
+}
+
+
 bool SubscriptExpr::isConstant() const { return i == nullptr || A == 0; }
 
 int64_t SubscriptExpr::getConstant() const {
