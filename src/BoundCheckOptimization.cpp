@@ -197,42 +197,22 @@ void ComputeEffects(Function &F, CMap &Grouped_C_GEN, EffectMap &effects,
 
   using EarliestUBCheckMap =
       SmallDenseMap<SubscriptIndentity,
-                    SmallDenseMap<SubscriptIndentity,
-                                  std::pair<CallInst *, UpperBoundPredicate>>>;
+                    SmallDenseMap<SubscriptIndentity, CallInst *>>;
 
   using EarliestLBCheckMap =
       SmallDenseMap<SubscriptIndentity,
-                    SmallDenseMap<SubscriptIndentity,
-                                  std::pair<CallInst *, LowerBoundPredicate>>>;
+                    SmallDenseMap<SubscriptIndentity, CallInst *>>;
 
   const auto findEarliestMergableUBCheck =
       [](EarliestUBCheckMap &ECM, const SubscriptIndentity &IndexIdentity,
-         const SubscriptIndentity &BoundIdentity)
-      -> std::pair<CallInst *, UpperBoundPredicate> * {
-    auto Iter = ECM.find(IndexIdentity);
-    if (Iter == ECM.end()) {
-      return nullptr;
-    }
-    auto Iter2 = Iter->second.find(BoundIdentity);
-    if (Iter2 == Iter->second.end()) {
-      return nullptr;
-    }
-    return &Iter2->second;
+         const SubscriptIndentity &BoundIdentity) -> CallInst * {
+    return ECM[IndexIdentity][BoundIdentity];
   };
 
   const auto findEarliestMergableLBCheck =
       [](EarliestLBCheckMap &ECM, const SubscriptIndentity &IndexIdentity,
-         const SubscriptIndentity &BoundIdentity)
-      -> std::pair<CallInst *, LowerBoundPredicate> * {
-    auto Iter = ECM.find(IndexIdentity);
-    if (Iter == ECM.end()) {
-      return nullptr;
-    }
-    auto Iter2 = Iter->second.find(BoundIdentity);
-    if (Iter2 == Iter->second.end()) {
-      return nullptr;
-    }
-    return &Iter2->second;
+         const SubscriptIndentity &BoundIdentity) -> CallInst * {
+    return ECM[IndexIdentity][BoundIdentity];
   };
 
   SmallVector<CallInst *, 32> obsoleteChecks;
@@ -311,62 +291,81 @@ void ComputeEffects(Function &F, CMap &Grouped_C_GEN, EffectMap &effects,
             UBP.print(llvm::errs());
             llvm::errs() << "\n";
 
-            CallInst *uppermostCheckInst = nullptr;
-            if (auto *E = findEarliestMergableUBCheck(
-                    EarliestUB, UBP.Index.getIdentity(),
-                    UBP.Bound.getIdentity())) {
-              // llvm::errs() << "Found earliest mergable UB check\n";
+            if (CLEAN_REDUNDANT_CHECK_IN_SAME_BB) {
+              CallInst *uppermostCheckInst = nullptr;
+              if (auto *E = findEarliestMergableUBCheck(
+                      EarliestUB, UBP.Index.getIdentity(),
+                      UBP.Bound.getIdentity())) {
 
-              auto &&uppermostCheck = E->second;
-              uppermostCheckInst = E->first;
+                uppermostCheckInst = E;
+                auto uppermostCheck = UpperBoundPredicate{
+                    SubscriptExpr::evaluate(
+                        uppermostCheckInst->getArgOperand(0)),
+                    SubscriptExpr::evaluate(
+                        uppermostCheckInst->getArgOperand(1))};
 
-              if (!uppermostCheck.subsumes(UBP)) {
-                // replace the earliest check with the new one
+                // VERBOSE_PRINT {
+                //   YELLOW(llvm::errs()) << "this Check ";
+                //   UBP.print(llvm::errs());
+                //   llvm::errs() << "  <=> ";
 
-                auto &&thisCheck = UBP;
-                auto constantDiffOfIndex =
-                    thisCheck.Index.getConstantDifference(uppermostCheck.Index);
-                auto constantDiffOfBound =
-                    thisCheck.Bound.getConstantDifference(uppermostCheck.Bound);
+                //   YELLOW(llvm::errs()) << "uppermost mergable Check ";
+                //   uppermostCheck.print(llvm::errs());
+                //   llvm::errs() << "\n";
+                // }
 
-                constantDiffOfBound -= constantDiffOfIndex;
+                if (!uppermostCheck.subsumes(UBP)) {
+                  // replace the earliest check with the new one
 
-                // always reuse the index value
+                  auto &&thisCheck = UBP;
+                  auto constantDiffOfIndex =
+                      thisCheck.Index.getConstantDifference(
+                          uppermostCheck.Index);
+                  auto constantDiffOfBound =
+                      thisCheck.Bound.getConstantDifference(
+                          uppermostCheck.Bound);
 
-                // modify the earliest check's bound to be the tightest bound
-                // We only need to add the constant
-                if (constantDiffOfBound != 0) {
-                  IRB.SetInsertPoint(uppermostCheckInst);
-                  Value *newBoundValue = IRB.CreateAdd(
-                      uppermostCheckInst->getArgOperand(0),
-                      IRB.getInt64(constantDiffOfBound));
-                  uppermostCheckInst->setArgOperand(0, newBoundValue);
+                  constantDiffOfBound -= constantDiffOfIndex;
 
-                  uppermostCheckInst->addAnnotationMetadata("Lifted");
+                  // always reuse the index value
+                  // modify the earliest check's bound to be the tightest bound
+                  // We only need to add the constant
+                  if (constantDiffOfBound != 0) {
+                    IRB.SetInsertPoint(uppermostCheckInst);
+                    Value *newBoundValue = nullptr;
+                    if (isa<ConstantInt>(
+                            uppermostCheckInst->getArgOperand(0))) {
+                      auto *CI = cast<ConstantInt>(
+                          uppermostCheckInst->getArgOperand(0));
+                      newBoundValue = IRB.getInt64(CI->getSExtValue() +
+                                                   constantDiffOfBound);
+                      llvm::errs() << "newBoundValue: ";
+                      newBoundValue->print(llvm::errs());
 
+                    } else {
+                      newBoundValue =
+                          IRB.CreateAdd(uppermostCheckInst->getArgOperand(0),
+                                        IRB.getInt64(constantDiffOfBound));
+                    }
+                    uppermostCheckInst->setArgOperand(0, newBoundValue);
+                  }
                 }
-              }
-              obsoleteChecks.push_back(CB);
-            } else {
-              uppermostCheckInst = CB;
-              isKept = true;
-            }
-            if (isKept) {
-              auto Iter1 = EarliestUB.find(UBP.Index.getIdentity());
-              std::pair<CallInst *, UpperBoundPredicate> newEntry = {
-                  uppermostCheckInst, UBP};
-
-              if (Iter1 != EarliestUB.end()) {
-                Iter1->getSecond().insert({UBP.Bound.getIdentity(),
-                newEntry});
+                obsoleteChecks.push_back(CB);
               } else {
-                EarliestUB[UBP.Index.getIdentity()] = {
-                    {UBP.Bound.getIdentity(), newEntry}};
-                // llvm::errs() << "Inserting new entry\n";
+                uppermostCheckInst = CB;
+                isKept = true;
               }
-              C_GEN[&BB].addPredicate(UBP);
-            }
+              if (isKept) {
+                // auto Iter1 = EarliestUB.find(UBP.Index.getIdentity());
 
+                // Iter1->getSecond().insert(
+                //     {UBP.Bound.getIdentity(), uppermostCheckInst});
+
+                EarliestUB[UBP.Index.getIdentity()][UBP.Bound.getIdentity()] =
+                    uppermostCheckInst;
+                C_GEN[&BB].addPredicate(UBP);
+              }
+            }
           } else if (F->getName() == CHECK_LB) {
             auto LBP = LowerBoundPredicate{BoundExpr, SubExpr};
             LBP.normalize();
@@ -376,61 +375,76 @@ void ComputeEffects(Function &F, CMap &Grouped_C_GEN, EffectMap &effects,
             LBP.print(llvm::errs());
             llvm::errs() << "\n";
 
-            CallInst *uppermostCheckInst = nullptr;
+            if (CLEAN_REDUNDANT_CHECK_IN_SAME_BB) {
+              CallInst *uppermostCheckInst = nullptr;
 
-            if (auto *E = findEarliestMergableLBCheck(
-                    EarliestLB, LBP.Index.getIdentity(),
-                    LBP.Bound.getIdentity())) {
+              if (auto *E = findEarliestMergableLBCheck(
+                      EarliestLB, LBP.Index.getIdentity(),
+                      LBP.Bound.getIdentity())) {
 
-              // llvm::errs() << "Found earliest mergable LB check\n";
-              auto &&uppermostCheck = E->second;
-              uppermostCheckInst = E->first;
+                // llvm::errs() << "Found earliest mergable LB check\n";
+                uppermostCheckInst = E;
+                auto uppermostCheck = LowerBoundPredicate{
+                    SubscriptExpr::evaluate(
+                        uppermostCheckInst->getArgOperand(0)),
+                    SubscriptExpr::evaluate(
+                        uppermostCheckInst->getArgOperand(1))};
 
-              if (!uppermostCheck.subsumes(LBP)) {
-                auto &&thisCheck = LBP;
-                auto constantDiffOfIndex =
-                    thisCheck.Index.getConstantDifference(uppermostCheck.Index);
-                auto constantDiffOfBound =
-                    thisCheck.Bound.getConstantDifference(uppermostCheck.Bound);
+                if (!uppermostCheck.subsumes(LBP)) {
+                  auto &&thisCheck = LBP;
+                  auto constantDiffOfIndex =
+                      thisCheck.Index.getConstantDifference(
+                          uppermostCheck.Index);
+                  auto constantDiffOfBound =
+                      thisCheck.Bound.getConstantDifference(
+                          uppermostCheck.Bound);
 
-                constantDiffOfBound -= constantDiffOfIndex;
+                  constantDiffOfBound -= constantDiffOfIndex;
 
-                // always reuse the index value
+                  VERBOSE_PRINT {
+                    YELLOW(llvm::errs()) << "findEarliestMergableLBCheck ";
+                    thisCheck.print(llvm::errs());
+                    llvm::errs() << " ";
+                    uppermostCheck.print(llvm::errs());
+                    llvm::errs()
+                        << " with diff " << constantDiffOfBound << "\n";
+                  }
 
-                // modify the earliest check's bound to be the tightest bound
-                // We only need to add the constant
-                if (constantDiffOfBound != 0) {
-                  IRB.SetInsertPoint(uppermostCheckInst);
-                  Value *newBoundValue = IRB.CreateAdd(
-                      uppermostCheckInst->getArgOperand(0),
-                      IRB.getInt64(constantDiffOfBound));
-                  uppermostCheckInst->setArgOperand(0, newBoundValue);
+                  // always reuse the index value
 
-                  uppermostCheckInst->addAnnotationMetadata("Lifted");
+                  // modify the earliest check's bound to be the tightest bound
+                  // We only need to add the constant
+                  if (constantDiffOfBound != 0) {
+                    IRB.SetInsertPoint(uppermostCheckInst);
+                    Value *newBoundValue = nullptr;
+                    if (isa<ConstantInt>(
+                            uppermostCheckInst->getArgOperand(0))) {
+                      auto *CI = cast<ConstantInt>(
+                          uppermostCheckInst->getArgOperand(0));
+                      newBoundValue = IRB.getInt64(CI->getSExtValue() +
+                                                   constantDiffOfBound);
+                    } else {
+                      newBoundValue =
+                          IRB.CreateAdd(uppermostCheckInst->getArgOperand(0),
+                                        IRB.getInt64(constantDiffOfBound));
+                    }
+                    uppermostCheckInst->setArgOperand(0, newBoundValue);
+                    uppermostCheck.Bound =
+                        SubscriptExpr::evaluate(newBoundValue);
+                    LBP = uppermostCheck;
+                  }
                 }
-              }
-              obsoleteChecks.push_back(CB);
-            } else {
-              uppermostCheckInst = CB;
-              isKept = true;
-            }
-
-            if (isKept) {
-
-              auto Iter1 = EarliestLB.find(LBP.Index.getIdentity());
-              std::pair<CallInst *, LowerBoundPredicate> newEntry = {
-                  uppermostCheckInst, LBP};
-
-              if (Iter1 != EarliestLB.end()) {
-                Iter1->getSecond().insert({LBP.Bound.getIdentity(),
-                newEntry});
+                obsoleteChecks.push_back(CB);
               } else {
-                EarliestLB[LBP.Index.getIdentity()] = {
-                    {LBP.Bound.getIdentity(), newEntry}};
+                uppermostCheckInst = CB;
+                isKept = true;
               }
 
-              // addPredicateToCGenLB(checked, &BB, LBP);
-              C_GEN[&BB].addPredicate(LBP);
+              if (isKept) {
+                EarliestLB[LBP.Index.getIdentity()][LBP.Bound.getIdentity()] =
+                    uppermostCheckInst;
+                C_GEN[&BB].addPredicate(LBP);
+              }
             }
           }
         }
@@ -442,8 +456,8 @@ void ComputeEffects(Function &F, CMap &Grouped_C_GEN, EffectMap &effects,
   }
 
   for (auto *CI : obsoleteChecks) {
-    Value* V0 = CI->getArgOperand(0);
-    Value* V1 = CI->getArgOperand(1);
+    Value *V0 = CI->getArgOperand(0);
+    Value *V1 = CI->getArgOperand(1);
     CI->eraseFromParent();
     RecursivelyClearAllInstructionsUsedOnlyBy(V0);
     RecursivelyClearAllInstructionsUsedOnlyBy(V1);

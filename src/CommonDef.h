@@ -22,6 +22,7 @@ constexpr auto CHECK_UB = "checkUpperBound";
 constexpr bool MODIFICATION = true;
 constexpr bool ELIMINATION = true;
 constexpr bool LOOP_PROPAGATION = false;
+constexpr bool CLEAN_REDUNDANT_CHECK_IN_SAME_BB = true;
 
 #define RedO llvm::WithColor(O).changeColor(raw_ostream::RED, true, false)
 #define GreenO llvm::WithColor(O).changeColor(raw_ostream::GREEN, true, false)
