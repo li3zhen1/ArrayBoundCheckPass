@@ -10,13 +10,21 @@
 using namespace llvm;
 
 void RecurrsivelyClearAllInstructionsUsedOnlyBy(Value *V) {
+  // llvm::errs() << "@@@ Trying to clear ";
+  // V->print(llvm::errs());
+  // llvm::errs() << "\n";
   if (isa<Instruction>(V)) {
     auto *I = cast<Instruction>(V);
-    for (auto &U : I->operands()) {
-      RecurrsivelyClearAllInstructionsUsedOnlyBy(U.get());
+    SmallVector<Value *, 4> ops;
+    auto opNum = I->getNumOperands();
+    for (unsigned i = 0; i < opNum; i++) {
+      ops.push_back(I->getOperand(i));
     }
     if (I->use_empty()) {
       I->eraseFromParent();
+      for (auto &U : ops) {
+        RecurrsivelyClearAllInstructionsUsedOnlyBy(U);
+      }
     }
   }
 }
@@ -1480,11 +1488,12 @@ void LoopCheckPropagation(Function &F,
         }
 
         VERBOSE_PRINT {
-          YELLOW(llvm::errs()) << "================== Step3: Block That Dominates All Exits ";
+          YELLOW(llvm::errs())
+              << "================== Step3: Block That Dominates All Exits ";
           BlockThatDominatesAllExits->printAsOperand(llvm::errs());
           YELLOW(llvm::errs()) << " ================== \n";
         }
-
+        SmallVector<CallInst *, 4> obsoleteChecks{};
         for (auto &Inst : *BlockThatDominatesAllExits) {
           if (!isa<CallInst>(Inst))
             continue;
@@ -1503,6 +1512,121 @@ void LoopCheckPropagation(Function &F,
           if (candidateKind == CandidateKind::NotCandidate) {
             continue;
           }
+
+          if (candidateKind == CandidateKind::LoopsWithDeltaOne) {
+            // replaced by the check “lb < min op c, max op c < ub” outside the
+            // loop.
+            llvm::errs() << "--- Replace by the check “lb < min op c, max op c "
+                            "< ub” outside the loop.\n";
+            auto *Term = BlockThatDominatesAllExits->getTerminator();
+            if (isa<BranchInst>(Term)) {
+              auto *BI = cast<BranchInst>(Term);
+              if (BI->isConditional()) {
+                auto *Cond = BI->getCondition();
+                auto *BBTrue = BI->getSuccessor(0);
+                auto *BBFalse = BI->getSuccessor(1);
+
+                if (isa<ICmpInst>(Cond)) {
+                  auto *ICmp = cast<ICmpInst>(Cond);
+                  auto ICmpKind = ICmp->getPredicate();
+                  auto lhsVal = ICmp->getOperand(0);
+                  auto rhsVal = ICmp->getOperand(1);
+
+                  auto lhsSubExpr = SubscriptExpr::evaluate(lhsVal);
+                  auto rhsSubExpr = SubscriptExpr::evaluate(rhsVal);
+
+                  bool lhsIsSubscript = lhsSubExpr.i == ValueWeCareAbout;
+                  bool rhsIsSubscript = rhsSubExpr.i == ValueWeCareAbout;
+
+                  if (!lhsIsSubscript && !rhsIsSubscript)
+                    continue;
+
+                  enum class BoundKind : bool {
+                    MAX,
+                    MIN,
+                  };
+
+                  BoundKind BK = BoundKind::MAX;
+
+                  switch (ICmpKind) {
+                  case CmpInst::Predicate::ICMP_SGT:
+                  case CmpInst::Predicate::ICMP_UGT:
+                    // a>b   =>     a >= b + 1
+                    rhsSubExpr.B += 1;
+                  case CmpInst::Predicate::ICMP_SGE:
+                  case CmpInst::Predicate::ICMP_UGE:
+                    if (lhsIsSubscript) {
+                      BK = BoundKind::MIN;
+                    } else {
+                      BK = BoundKind::MAX;
+                    }
+                    break;
+
+                  case CmpInst::Predicate::ICMP_SLT:
+                  case CmpInst::Predicate::ICMP_ULT:
+                    // a<b   =>     a <= b - 1
+                    rhsSubExpr.B -= 1;
+                  case CmpInst::Predicate::ICMP_SLE:
+                  case CmpInst::Predicate::ICMP_ULE:
+                    if (lhsIsSubscript) {
+                      BK = BoundKind::MAX;
+                    } else {
+                      BK = BoundKind::MIN;
+                    }
+                    break;
+
+                  default:
+                    llvm_unreachable("Unimplemented ICmpKind!!");
+                  }
+
+                  SubscriptExpr Subscript =
+                      lhsIsSubscript ? lhsSubExpr : rhsSubExpr;
+                  SubscriptExpr Bound =
+                      lhsIsSubscript ? rhsSubExpr : lhsSubExpr;
+
+                  auto IDom = DT.getNode(BlockThatDominatesAllExits)
+                                  ->getIDom()
+                                  ->getBlock();
+
+                  assert(DT.dominates(Subscript.i, IDom->getTerminator()));
+                  assert(DT.dominates(Bound.i, IDom->getTerminator()));
+
+                  IRB.SetInsertPoint(IDom->getTerminator());
+
+                  if (BK == BoundKind::MAX && FName == CHECK_UB) {
+                    createCheckCall(IRB, IDom->getTerminator(), CheckUpper,
+                                    createValueForSubExpr(
+                                        IRB, IDom->getTerminator(), Bound),
+                                    createValueForSubExpr(
+                                        IRB, IDom->getTerminator(), Subscript),
+                                    file);
+                  } else if (BK == BoundKind::MIN && FName == CHECK_LB) {
+                    createCheckCall(IRB, IDom->getTerminator(), CheckLower,
+                                    createValueForSubExpr(
+                                        IRB, IDom->getTerminator(), Bound),
+                                    createValueForSubExpr(
+                                        IRB, IDom->getTerminator(), Subscript),
+                                    file);
+                  } else {
+                    // just move the check unchanged
+                  }
+                }
+              }
+            }
+          } else {
+            // just propagate the check
+            llvm::errs() << "--- Hoisting without modification.\n";
+          }
+
+          obsoleteChecks.push_back(CB);
+        }
+        for (auto *CB : obsoleteChecks) {
+          // cleanup
+          Value *Bound = CB->getArgOperand(0);
+          Value *Index = CB->getArgOperand(1);
+          CB->eraseFromParent();
+          RecurrsivelyClearAllInstructionsUsedOnlyBy(Bound);
+          RecurrsivelyClearAllInstructionsUsedOnlyBy(Index);
         }
       }
 
