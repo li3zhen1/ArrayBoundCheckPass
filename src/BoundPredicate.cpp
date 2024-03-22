@@ -49,30 +49,37 @@ bool BoundPredicateBase::operator==(const BoundPredicateBase &Other) const {
 #pragma region subsumes
 
 bool UpperBoundPredicate::subsumes(const UpperBoundPredicate &Other) const {
-  if (Index != Other.Index) {
+
+  UpperBoundPredicate self = *this;
+  self.normalize();
+
+  UpperBoundPredicate other = Other;
+  other.normalize();
+
+  if (self.Index != other.Index) {
     return false;
   }
 
-  if (Bound.isConstant() && Other.Bound.isConstant()) {
-    return Bound.B <= Other.Bound.B;
+  if (self.Bound.isConstant() && other.Bound.isConstant()) {
+    return self.Bound.B <= other.Bound.B;
   }
 
-  if (!Bound.isConstant() && !Other.Bound.isConstant()) {
-    if(Bound.i != Other.Bound.i) {
-      Bound.dump(YELLOW(llvm::errs()));
-      Other.Bound.dump(YELLOW(llvm::errs()));
+  if (!self.Bound.isConstant() && !other.Bound.isConstant()) {
+    if (self.Bound.i != other.Bound.i) {
+      self.Bound.dump(YELLOW(llvm::errs()));
+      other.Bound.dump(YELLOW(llvm::errs()));
       llvm_unreachable("Unimplemented subsume case");
     }
-    if (Bound.A == Other.Bound.A) {
-      return Bound.B <= Other.Bound.B;
+    if (self.Bound.A == other.Bound.A) {
+      return self.Bound.B <= other.Bound.B;
     }
 
     print(YELLOW(llvm::errs()));
     Other.print(YELLOW(llvm::errs()));
     llvm_unreachable("Unimplemented subsume case");
   }
-    print(YELLOW(llvm::errs()));
-    Other.print(YELLOW(llvm::errs())); 
+  print(YELLOW(llvm::errs()));
+  Other.print(YELLOW(llvm::errs()));
   llvm_unreachable("Unimplemented subsume case");
 }
 
@@ -85,18 +92,29 @@ bool LowerBoundPredicate::subsumes(const UpperBoundPredicate &Other) const {
 }
 
 bool LowerBoundPredicate::subsumes(const LowerBoundPredicate &Other) const {
-  if (Index != Other.Index) {
+
+  LowerBoundPredicate self = *this;
+  self.normalize();
+
+  LowerBoundPredicate other = Other;
+  other.normalize();
+
+  if (self.Index != other.Index) {
     return false;
   }
 
-  if (Bound.isConstant() && Other.Bound.isConstant()) {
-    return Bound.B >= Other.Bound.B;
+  // llvm::errs() << "Subsumes\n";
+  // self.print(llvm::errs());
+  // other.print(llvm::errs());
+
+  if (self.Bound.isConstant() && other.Bound.isConstant()) {
+    return self.Bound.B >= other.Bound.B;
   }
 
-  if (!Bound.isConstant() && !Other.Bound.isConstant()) {
-    assert(Bound.i == Other.Bound.i);
-    if (Bound.A == Other.Bound.A) {
-      return Bound.B >= Other.Bound.B;
+  if (!self.Bound.isConstant() && !other.Bound.isConstant()) {
+    assert(self.Bound.i == other.Bound.i);
+    if (self.Bound.A == other.Bound.A) {
+      return self.Bound.B >= other.Bound.B;
     }
 
     print(YELLOW(llvm::errs()));

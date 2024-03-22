@@ -304,16 +304,6 @@ void ComputeEffects(Function &F, CMap &Grouped_C_GEN, EffectMap &effects,
                     SubscriptExpr::evaluate(
                         uppermostCheckInst->getArgOperand(1))};
 
-                // VERBOSE_PRINT {
-                //   YELLOW(llvm::errs()) << "this Check ";
-                //   UBP.print(llvm::errs());
-                //   llvm::errs() << "  <=> ";
-
-                //   YELLOW(llvm::errs()) << "uppermost mergable Check ";
-                //   uppermostCheck.print(llvm::errs());
-                //   llvm::errs() << "\n";
-                // }
-
                 if (!uppermostCheck.subsumes(UBP)) {
                   // replace the earliest check with the new one
 
@@ -356,10 +346,6 @@ void ComputeEffects(Function &F, CMap &Grouped_C_GEN, EffectMap &effects,
                 isKept = true;
               }
               if (isKept) {
-                // auto Iter1 = EarliestUB.find(UBP.Index.getIdentity());
-
-                // Iter1->getSecond().insert(
-                //     {UBP.Bound.getIdentity(), uppermostCheckInst});
 
                 EarliestUB[UBP.Index.getIdentity()][UBP.Bound.getIdentity()] =
                     uppermostCheckInst;
@@ -402,9 +388,9 @@ void ComputeEffects(Function &F, CMap &Grouped_C_GEN, EffectMap &effects,
                   constantDiffOfBound -= constantDiffOfIndex;
 
                   VERBOSE_PRINT {
-                    YELLOW(llvm::errs()) << "findEarliestMergableLBCheck ";
+                    YELLOW(llvm::errs()) << "this check:";
                     thisCheck.print(llvm::errs());
-                    llvm::errs() << " ";
+                    llvm::errs() << " earliest check:";
                     uppermostCheck.print(llvm::errs());
                     llvm::errs()
                         << " with diff " << constantDiffOfBound << "\n";
@@ -414,7 +400,10 @@ void ComputeEffects(Function &F, CMap &Grouped_C_GEN, EffectMap &effects,
 
                   // modify the earliest check's bound to be the tightest bound
                   // We only need to add the constant
+                  
                   if (constantDiffOfBound != 0) {
+                    uppermostCheckInst->print(llvm::errs());
+                    llvm::errs() << "\n";
                     IRB.SetInsertPoint(uppermostCheckInst);
                     Value *newBoundValue = nullptr;
                     if (isa<ConstantInt>(
@@ -429,9 +418,8 @@ void ComputeEffects(Function &F, CMap &Grouped_C_GEN, EffectMap &effects,
                                         IRB.getInt64(constantDiffOfBound));
                     }
                     uppermostCheckInst->setArgOperand(0, newBoundValue);
-                    uppermostCheck.Bound =
-                        SubscriptExpr::evaluate(newBoundValue);
-                    LBP = uppermostCheck;
+
+                    uppermostCheckInst->print(llvm::errs());
                   }
                 }
                 obsoleteChecks.push_back(CB);
