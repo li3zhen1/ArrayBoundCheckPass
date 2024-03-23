@@ -3,16 +3,19 @@
 #include "BoundPredicateSet.h"
 #include "CommonDef.h"
 #include "Effect.h"
+#include "Stats.h"
 #include "SubscriptExpr.h"
 #include "llvm/IR/Dominators.h"
 #include <utility>
 
 using namespace llvm;
 
+/**
+ * @brief Clean unused instructions recursively
+ *
+ * @param V
+ */
 void RecursivelyClearAllInstructionsUsedOnlyBy(Value *V) {
-  // llvm::errs() << "@@@ Trying to clear ";
-  // V->print(llvm::errs());
-  // llvm::errs() << "\n";
   if (isa<Instruction>(V)) {
     auto *I = cast<Instruction>(V);
     SmallVector<Value *, 4> ops;
@@ -29,6 +32,14 @@ void RecursivelyClearAllInstructionsUsedOnlyBy(Value *V) {
   }
 }
 
+/**
+ * @brief Create a Value For Sub Expr object for A*i+B
+ *
+ * @param IRB
+ * @param point
+ * @param SE
+ * @return Value*
+ */
 Value *createValueForSubExpr(IRBuilder<> &IRB, Instruction *point,
                              const SubscriptExpr &SE) {
   IRB.SetInsertPoint(point);
@@ -109,6 +120,17 @@ Value *createValueForSubExpr(IRBuilder<> &IRB, Instruction *point,
   }
 };
 
+/**
+ * @brief Create a Check Call object
+ *
+ * @param IRB
+ * @param point
+ * @param Check Lower or Upper bound check
+ * @param bound
+ * @param subscript
+ * @param file
+ * @return CallInst*
+ */
 CallInst *createCheckCall(IRBuilder<> &IRB, Instruction *point,
                           FunctionCallee Check, Value *bound, Value *subscript,
                           Constant *file) {
@@ -122,6 +144,14 @@ CallInst *createCheckCall(IRBuilder<> &IRB, Instruction *point,
   return IRB.CreateCall(Check, {bound, subscript, file, ln});
 };
 
+/**
+ * @brief Update C_GEN
+ *
+ * @param F
+ * @param Grouped_C_GEN
+ * @param ValuesReferencedInBoundCheck
+ * @param Evaluated
+ */
 void RecomputeC_GEN(Function &F, CMap &Grouped_C_GEN,
                     const ValuePtrVector &ValuesReferencedInBoundCheck,
                     ValueEvaluationCache &Evaluated) {
@@ -187,6 +217,17 @@ void RecomputeC_GEN(Function &F, CMap &Grouped_C_GEN,
   }
 }
 
+/**
+ * @brief Computer C_GEN, Effects, and record all `i` in subscript expressions
+ *
+ * @param F
+ * @param Grouped_C_GEN
+ * @param effects
+ * @param ValuesReferencedInBoundCheck
+ * @param _ValuesReferencedInBound
+ * @param Evaluated
+ * @param file
+ */
 void ComputeEffects(Function &F, CMap &Grouped_C_GEN, EffectMap &effects,
                     ValuePtrVector &ValuesReferencedInBoundCheck,
                     ValuePtrVector &_ValuesReferencedInBound,
@@ -540,6 +581,13 @@ void ComputeEffects(Function &F, CMap &Grouped_C_GEN, EffectMap &effects,
 }
 
 // __attribute__((always_inline)) inline
+/**
+ * @brief Get the Effect, i.e., how the subscript expression is changed
+ *
+ * @param SE
+ * @param V
+ * @return EffectOnSubscript
+ */
 EffectOnSubscript getEffect(const SmallVector<SubscriptExpr> &SE,
                             const Value *V) {
   if (SE.empty()) {
@@ -564,14 +612,26 @@ EffectOnSubscript getEffect(const SmallVector<SubscriptExpr> &SE,
   return {EffectKind::UnknownChanged, std::nullopt};
 }
 
+/**
+ * @brief Run the modification analysis
+ *
+ * @param F
+ * @param C_IN
+ * @param C_OUT
+ * @param C_GEN
+ * @param Effects
+ * @param ValuesReferencedInSubscript
+ */
 void RunModificationAnalysis(Function &F, CMap &C_IN, CMap &C_OUT, CMap &C_GEN,
                              EffectMap &Effects,
                              ValuePtrVector &ValuesReferencedInSubscript) {
 
+  // EFFECT(B, v) in the paper
   auto EFFECT = [&](const BasicBlock *B, const Value *V) -> EffectOnSubscript {
     return getEffect(Effects[V][B], V);
   };
 
+  // backward function in the paper
   auto backward = [&](const Value *V, BoundPredicateSet &C_OUT_B,
                       const BasicBlock *B) -> BoundPredicateSet {
 #define KILL_CHECK break
@@ -651,27 +711,26 @@ void RunModificationAnalysis(Function &F, CMap &C_IN, CMap &C_OUT, CMap &C_GEN,
 #undef KILL_CHECK
     return S;
   };
-#define ONFLIGHT_PRINT if (false)
+
+  /**
+   * For each value referenced in subscript, compute C_IN and C_OUT separately
+   */
   for (const Value *V : ValuesReferencedInSubscript) {
     bool stable = false;
     int round = 0;
+
+    // compare C_IN/C_OUT, if changed, set stable to false
     auto assignIfChanged = [&stable](auto &A, auto B) {
       if (A != B) {
         A = B;
         stable = false;
       }
     };
+
+    // start interating over C_IN/C_OUT until stable
     do {
       stable = true;
       round++;
-
-      ONFLIGHT_PRINT {
-
-        YELLOW(llvm::errs()) << "\n\n\n=========== Iterating over ";
-        V->printAsOperand(llvm::errs());
-        llvm::errs() << "  " << round << " round\n"
-                     << "\n";
-      }
 
       SmallVector<const BasicBlock *, 32> WorkList{};
       SmallPtrSet<const BasicBlock *, 32> Visited{};
@@ -680,27 +739,14 @@ void RunModificationAnalysis(Function &F, CMap &C_IN, CMap &C_OUT, CMap &C_GEN,
       while (!WorkList.empty()) {
 
         const auto *BB = WorkList.pop_back_val();
-
         auto bkwd = backward(V, C_OUT[V][BB], BB);
-        ONFLIGHT_PRINT {
-          BB->printAsOperand(llvm::errs());
-          llvm::errs() << "------------------\n";
-          C_IN[V][BB].print(llvm::errs());
-          llvm::errs() << "V ";
-          bkwd.print(llvm::errs());
-          llvm::errs() << "= ";
-        }
 
+        // C_IN[B] = C_GEN[B] V backward(C_OUT[B], B)
         assignIfChanged(C_IN[V][BB],
                         BoundPredicateSet::Or({C_GEN[V][BB], bkwd}));
 
-        ONFLIGHT_PRINT {
-          C_IN[V][BB].print(llvm::errs());
-          llvm::errs() << "\n";
-        }
-
+        // C_OUT[B] = AND(C_IN[S])
         SmallVector<BoundPredicateSet, 4> successorPredicts = {};
-
         for (const auto *Succ : successors(BB)) {
           successorPredicts.push_back(C_IN[V][Succ]);
         }
@@ -761,15 +807,16 @@ void ApplyModification(Function &F, CMap &Grouped_C_OUT, CMap &C_GEN,
     }
   };
 
+  // for different values (i) referenced in subscript, modify separately
   for (const auto *V : ValuesReferencedInSubscript) {
     auto &&C_OUT = Grouped_C_OUT[V];
     for (auto &BB : F) {
-      if (C_OUT[&BB].isEmpty()) {
+      if (C_OUT[&BB].isEmpty())
         continue;
-      }
+      // Update C_GEN
+      C_GEN[V][&BB].addPredicateSet(C_OUT[&BB]);
 
-      C_GEN[V][&BB].addPredicateSet(C_OUT[&BB]); // Update C_GEN
-
+      // Try to reuse A*i+B if possible, to avoid redundant instructions
       SmallDenseMap<std::pair<int64_t, int64_t>, Value *> ReusableValue{};
 
       bool hasUpperBound = false;
@@ -781,6 +828,10 @@ void ApplyModification(Function &F, CMap &Grouped_C_OUT, CMap &C_GEN,
           auto F = CB->getCalledFunction();
           auto FName = F->getName();
 
+          /**
+           * We only modify the bound check instructions where i is equal to the
+           * current V
+           */
           if (FName != CHECK_UB && FName != CHECK_LB)
             continue;
 
@@ -790,19 +841,27 @@ void ApplyModification(Function &F, CMap &Grouped_C_OUT, CMap &C_GEN,
           if (SE.first.i != V)
             continue;
 
+          /**
+           * For the existing checks, we need to modify them based on C_OUT
+           * when meeting one, we need to check if C_OUT has a tighter bound
+           * than the current one, if so, we can modify the check.
+           *
+           *
+           */
           if (FName == CHECK_UB) {
             auto BSE = getOrEvaluateSubExpr(CB->getArgOperand(0));
             auto UBP = UpperBoundPredicate{BSE.first, SE.first};
             UBP.normalize();
 
             // if C_OUT subsumes UBP, we can narrow down the bound
-
             hasUpperBound = true;
 
+            // find if C_OUT.UpperBound has a tighter bound
             auto tighterBoundIfExists =
                 llvm::find_if(C_OUT[&BB].UbPredicates,
                               [&](const auto &It) { return It.subsumes(UBP); });
 
+            // if we find a tighter bound, we can modify the check
             if (tighterBoundIfExists != C_OUT[&BB].UbPredicates.end()) {
               auto tighterBound = *tighterBoundIfExists;
               auto constantDiffOfIndex =
@@ -859,7 +918,6 @@ void ApplyModification(Function &F, CMap &Grouped_C_OUT, CMap &C_GEN,
               constantDiffOfIndex -= constantDiffOfBound;
 
               // always reuse the index value
-
               if (constantDiffOfBound != 0) {
                 VERBOSE_PRINT {
                   llvm::errs() << "Modify check based on tighter C_OUT: \n\t";
@@ -887,22 +945,18 @@ void ApplyModification(Function &F, CMap &Grouped_C_OUT, CMap &C_GEN,
         }
       }
 
+      /**
+       * For the blocks that originally have no bound checks, but C_OUT has
+       * some, we need to insert the bound checks, and then the checks in the
+       * successors could be eliminated.
+       */
       auto *trailingInsertPoint = BB.getTerminator(); //->getPrevNode();
 
       VERBOSE_PRINT {
         if ((hasUpperBound || hasLowerBound) && trailingInsertPoint) {
-
           llvm::errs() << "Modify check because this block has no checks but "
                           "C_OUT has some\n\t";
           trailingInsertPoint->print(llvm::errs());
-          llvm::errs() << "\n";
-          // if (llvm::any_of(BB,
-          //                  [&](Instruction &I) { return isa<PHINode>(I); }))
-          //                  {
-          //   llvm::errs() << "PHI NODES\n";
-          //   BB.print(llvm::errs());
-          // }
-          llvm::errs() << "\n";
           llvm::errs() << "\n";
         }
       }
@@ -936,27 +990,6 @@ void ApplyModification(Function &F, CMap &Grouped_C_OUT, CMap &C_GEN,
           }
         }
       }
-
-      // const auto reuseOrCreate = [&](const SubscriptExpr &SE) -> Value * {
-      //   auto Iter = ReusableValue.find({SE.A, SE.B});
-      //   if (Iter == ReusableValue.end()) {
-      //     return createValueForSubExpr(IRB, firstOldCheckInst, SE);
-      //   } else {
-      //     return Iter->second;
-      //   }
-      // };
-
-      // for (auto *CI : CI) {
-      //   // remove all single use
-      //   // SmallVector<Instruction> WorkList{};
-      //   // TODO: DFS to remove all single use
-      //   // for (auto& U : CI->uses()) {
-      //   //   if (U->hasOneUser() && isa<Instruction>(U)) {
-      //   //     cast<Instruction>(U)->eraseFromParent();
-      //   //   }
-      //   // }
-      //   CI->eraseFromParent();
-      // }
     }
   }
 }
@@ -964,10 +997,13 @@ void ApplyModification(Function &F, CMap &Grouped_C_OUT, CMap &C_GEN,
 void RunEliminationAnalysis(Function &F, CMap &C_IN, CMap &C_OUT, CMap &C_GEN,
                             EffectMap &Effects,
                             ValuePtrVector &ValuesReferencedInSubscript) {
+
+  // EFFECT(B, v) in the paper
   auto EFFECT = [&](const BasicBlock *B, const Value *V) -> EffectOnSubscript {
     return getEffect(Effects[V][B], V);
   };
 
+  // forward function in the paper
   auto forward = [&](const Value *V, BoundPredicateSet &C_IN_B,
                      const BasicBlock *B) -> BoundPredicateSet {
 #define KILL_CHECK break
@@ -1044,6 +1080,7 @@ void RunEliminationAnalysis(Function &F, CMap &C_IN, CMap &C_OUT, CMap &C_GEN,
     return S;
   };
 
+  // for each value referenced in subscript, compute C_IN and C_OUT separately
   for (const Value *V : ValuesReferencedInSubscript) {
     bool stable = false;
     int round = 0;
@@ -1065,11 +1102,13 @@ void RunEliminationAnalysis(Function &F, CMap &C_IN, CMap &C_OUT, CMap &C_GEN,
 
         const auto *BB = WorkList.pop_back_val();
 
+        // C_GEN[B] = C_IN[B] V forward(C_OUT[B], B)
         const auto newCOUT =
             BoundPredicateSet::Or({C_GEN[V][BB], forward(V, C_IN[V][BB], BB)});
 
         assignIfChanged(C_OUT[V][BB], newCOUT);
 
+        // C_IN[B] = AND(C_OUT[S])
         SmallVector<BoundPredicateSet, 4> predecessorPredicts = {};
         for (const auto *Pred : predecessors(BB)) {
           predecessorPredicts.push_back(C_OUT[V][Pred]);
@@ -1111,8 +1150,10 @@ void ApplyElimination(Function &F, CMap &Grouped_C_IN, CMap &C_GEN,
   SubscriptExpr IndexExpr = SubscriptExpr::evaluate(IndexValue);               \
   if (IndexExpr.i == V)
 
-  BLUE(llvm::errs())
-      << "===================== Apply Elimination ===================== \n";
+  VERBOSE_PRINT {
+    BLUE(llvm::errs())
+        << "===================== Apply Elimination ===================== \n";
+  }
 
   SmallVector<CallInst *, 32> RedundantCheck = {};
   for (const auto *V : ValuesReferencedInSubscript) {
@@ -1134,6 +1175,9 @@ void ApplyElimination(Function &F, CMap &Grouped_C_IN, CMap &C_GEN,
               LBP.normalize();
               LBP.print(llvm::errs(), true);
 
+              /**
+               * @brief if C_IN subsumes UBP, we can eliminate the check
+               */
               if (llvm::any_of(C_IN[&BB].LbPredicates,
                                [&](const LowerBoundPredicate &p) {
                                  return p.subsumes(LBP);
@@ -1156,7 +1200,9 @@ void ApplyElimination(Function &F, CMap &Grouped_C_IN, CMap &C_GEN,
               auto UBP = UpperBoundPredicate{BoundExpr, IndexExpr};
               UBP.normalize();
               UBP.print(llvm::errs(), true);
-
+              /**
+               * @brief if C_IN subsumes UBP, we can eliminate the check
+               */
               if (llvm::any_of(C_IN[&BB].UbPredicates,
                                [&](const UpperBoundPredicate &p) {
                                  return p.subsumes(UBP);
@@ -1280,8 +1326,8 @@ auto IdentifyCandidatesForPropagation(EffectMap &Effects, Loop *L,
 // to step into the loop.
 // If we always step into the loop, we can propagate the check
 // outside the loop.
-SmallVector<SubscriptExpr, 4> findAllPossibleInitialValuesAtBB(Value *V,
-                                                               Loop *L) {
+SmallVector<SubscriptExpr, 4>
+findAllPossibleInitialValuesAtBB(Value *V, Loop *L, DominatorTree &DT) {
   SubscriptExpr SE = SubscriptExpr::evaluate(V);
   SmallVector<SubscriptExpr, 4> Result{};
   if (SE.isConstant()) {
@@ -1289,6 +1335,10 @@ SmallVector<SubscriptExpr, 4> findAllPossibleInitialValuesAtBB(Value *V,
     return Result;
   }
   if (isa<PHINode>(SE.i)) {
+    /*
+    For the phi value in some benchmark, we travel all to incoming blocks to
+    find all possible initial values (or fail)
+    */
     auto PhiV = cast<PHINode>(V);
     for (auto *Incoming : PhiV->blocks()) {
       if (L->contains(cast<BasicBlock>(Incoming))) {
@@ -1297,7 +1347,7 @@ SmallVector<SubscriptExpr, 4> findAllPossibleInitialValuesAtBB(Value *V,
       auto *IncomingBB = cast<BasicBlock>(Incoming);
       auto *IncomingValue = PhiV->getIncomingValueForBlock(IncomingBB);
       auto allPossibleIncomingValues =
-          findAllPossibleInitialValuesAtBB(IncomingValue, L);
+          findAllPossibleInitialValuesAtBB(IncomingValue, L, DT);
 
       for (auto &PossibleIncomingValue : allPossibleIncomingValues) {
         Result.push_back(SE.substituted({{SE.i, PossibleIncomingValue}}));
@@ -1306,13 +1356,15 @@ SmallVector<SubscriptExpr, 4> findAllPossibleInitialValuesAtBB(Value *V,
   } else if (isa<ConstantInt>(V)) {
     Result.push_back(SE);
   } else {
+    // if the value is pointer, we try to find all dominating stores
     for (auto user : SE.i->users()) {
       if (L->contains(cast<Instruction>(user)->getParent())) {
         continue;
       }
-      if (isa<StoreInst>(user)) {
+      if (isa<StoreInst>(user) && isa<Instruction>(V)) {
         auto SI = cast<StoreInst>(user);
-        if (SI->getPointerOperand() == SE.i) {
+        if (SI->getPointerOperand() == SE.i &&
+            DT.dominates(SI, cast<Instruction>(V))) {
           Result.push_back(SE.substituted(
               {{SE.i, SubscriptExpr::evaluate(SI->getValueOperand())}}));
         }
@@ -1336,16 +1388,9 @@ void LoopCheckPropagation(Function &F,
   FunctionCallee CheckLower = F.getParent()->getOrInsertFunction(
       CHECK_LB, Attr, IRB.getVoidTy(), IRB.getInt64Ty(), IRB.getInt64Ty(),
       IRB.getPtrTy(), IRB.getInt64Ty());
-
   FunctionCallee CheckUpper = F.getParent()->getOrInsertFunction(
       CHECK_UB, Attr, IRB.getVoidTy(), IRB.getInt64Ty(), IRB.getInt64Ty(),
       IRB.getPtrTy(), IRB.getInt64Ty());
-
-  llvm::errs() << "before LoopCheckPropagation\n";
-  for (auto &BB : F) {
-    BB.print(llvm::errs());
-  }
-  llvm::errs() << "start LoopCheckPropagation\n";
 
   for (auto *ValueWeCareAbout : ValuesReferencedInSubscript) {
     VERBOSE_PRINT {
@@ -1354,13 +1399,12 @@ void LoopCheckPropagation(Function &F,
       YELLOW(llvm::errs()) << " ===========\n";
     }
 
-    // Step 2: Check hoisting.
+    // Step 2: Check hoisting. (The hoist function in paper)
     for (auto *L : LI) {
       SmallVector<BasicBlock *> exitBlocks;
       L->getExitBlocks(exitBlocks);
 
       SmallPtrSet<BasicBlock *, 32> ND{};
-      // SmallDenseMap<BasicBlock *, SmallVector<CallInst *>> C_n{};
 
       for (auto *BB : L->blocks()) {
         if (llvm::any_of(exitBlocks, [&](auto *exitBlock) {
@@ -1370,6 +1414,7 @@ void LoopCheckPropagation(Function &F,
         }
       }
 
+      // The C(n) function in paper
       auto getCnFor = [&](BasicBlock *BB) -> SmallVector<CallInst *> {
         auto Result = SmallVector<CallInst *>{};
         /** for eachblock n do
@@ -1391,9 +1436,12 @@ void LoopCheckPropagation(Function &F,
             continue;
 
           auto candidateKind = IdentifyCandidatesForPropagation(Effects, L, CB);
+
           if (candidateKind != CandidateKind::NotCandidate) {
-            CB->print(llvm::errs());
-            llvm::errs() << "\n";
+            VERBOSE_PRINT {
+              CB->print(llvm::errs());
+              llvm::errs() << "\n";
+            }
             Result.push_back(CB);
           }
         }
@@ -1422,6 +1470,7 @@ void LoopCheckPropagation(Function &F,
         llvm::errs() << " }\n";
       }
 
+      // start loop check propagation
       bool change = true;
       while (change) {
         change = false;
@@ -1454,10 +1503,11 @@ void LoopCheckPropagation(Function &F,
             llvm::errs() << "\n";
           }
 
-          SmallVector<BoundPredicateSet, 4> C_Ss;
+          SmallVector<BoundPredicateSet, 4> C_Ss; // list of C(S), S is succ
+
           for (auto *Succ : SuccInsideLoop) {
             VERBOSE_PRINT {
-              llvm::errs() << "> Succ of ";
+              llvm::errs() << "- Succ of ";
               n->printAsOperand(llvm::errs());
               llvm::errs() << " : ";
               Succ->printAsOperand(llvm::errs());
@@ -1470,8 +1520,6 @@ void LoopCheckPropagation(Function &F,
               SubscriptExpr BoundSE =
                   SubscriptExpr::evaluate(CB->getArgOperand(0));
 
-              assert(CandidateSE.i == ValueWeCareAbout);
-
               if (CB->getCalledFunction()->getName() == CHECK_LB) {
                 C_S.LbPredicates.push_back(
                     LowerBoundPredicate{BoundSE, CandidateSE});
@@ -1480,21 +1528,23 @@ void LoopCheckPropagation(Function &F,
                     UpperBoundPredicate{BoundSE, CandidateSE});
               }
             }
-
-            C_S.print(llvm::errs());
+            VERBOSE_PRINT { C_S.print(llvm::errs()); }
             C_Ss.push_back(C_S);
           }
+          // prop = AND(C(S)), where S is succ
           BoundPredicateSet prop = BoundPredicateSet::And(C_Ss);
 
           if (prop.isEmpty()) {
             continue;
           }
 
-          llvm::errs() << "Propagating prop ";
-          prop.print(llvm::errs());
-          llvm::errs() << " to n ";
-          n->printAsOperand(llvm::errs());
-          llvm::errs() << "\n";
+          VERBOSE_PRINT {
+            llvm::errs() << "Propagating prop ";
+            prop.print(llvm::errs());
+            llvm::errs() << " to n ";
+            n->printAsOperand(llvm::errs());
+            llvm::errs() << "\n";
+          }
 
           // hoist checks in prop to n
           auto *InsertPoint = n->getTerminator();
@@ -1502,6 +1552,9 @@ void LoopCheckPropagation(Function &F,
           if (DT.dominates(prop.getSubscriptIdentity()->second, InsertPoint)) {
             change = true;
             IRB.SetInsertPoint(InsertPoint);
+
+            // hoist checks in prop to n
+            // if c \in S, S \in Succ(n) thenelimmatec from S fi
             for (auto &LBP : prop.LbPredicates) {
               Value *bound = createValueForSubExpr(IRB, InsertPoint, LBP.Bound);
               Value *subscript =
@@ -1518,7 +1571,6 @@ void LoopCheckPropagation(Function &F,
             }
 
             // remove checks from successors
-            // TODO: clean unused values
             for (auto *Succ : SuccInsideLoop) {
               for (auto *CB : getCnFor(Succ)) {
                 Value *Bound = CB->getArgOperand(0);
@@ -1592,12 +1644,8 @@ void LoopCheckPropagation(Function &F,
             llvm::errs() << "\n";
           }
 
-          bool canPerformHoist = false;
-
           // if (candidateKind == CandidateKind::LoopsWithDeltaOne)
           {
-            // replaced by the check “lb < min op c, max op c < ub” outside the
-            // loop.
             auto *Term = BlockThatDominatesAllExits->getTerminator();
 
             if (!isa<BranchInst>(Term))
@@ -1626,10 +1674,10 @@ void LoopCheckPropagation(Function &F,
               auto rhsSubExpr = SubscriptExpr::evaluate(rhsVal);
 
               auto allPossibleLhsInitialValues =
-                  findAllPossibleInitialValuesAtBB(lhsVal, L);
+                  findAllPossibleInitialValuesAtBB(lhsVal, L, DT);
 
               auto allPossibleRhsInitialValues =
-                  findAllPossibleInitialValuesAtBB(rhsVal, L);
+                  findAllPossibleInitialValuesAtBB(rhsVal, L, DT);
 
               VERBOSE_PRINT {
                 llvm::errs() << " - HoistedSubscript: ";
@@ -1776,6 +1824,9 @@ void LoopCheckPropagation(Function &F,
                     << "\n";
               }
 
+              if (!alwaysJumpInsideLoop)
+                continue;
+
               SubscriptExpr SubscriptExprInBr =
                   lhsIsSubscript ? lhsSubExpr : rhsSubExpr;
 
@@ -1807,15 +1858,17 @@ void LoopCheckPropagation(Function &F,
                 llvm::errs() << "\n";
               }
 
-              // check if
-              for (const auto *HDBB : HoistDestinationBB) {
-                assert(
-                    isa<PHINode>(SubscriptExprInBr.i) ||
-                    SubscriptExprInBr.isConstant() ||
-                    DT.dominates(SubscriptExprInBr.i, HDBB->getTerminator()));
-                assert(isa<PHINode>(SubscriptExprInBr.i) ||
-                       BoundaryExprInBr.isConstant() ||
-                       DT.dominates(BoundaryExprInBr.i, HDBB->getTerminator()));
+              {
+                for (const auto *HDBB : HoistDestinationBB) {
+                  assert(
+                      isa<PHINode>(SubscriptExprInBr.i) ||
+                      SubscriptExprInBr.isConstant() ||
+                      DT.dominates(SubscriptExprInBr.i, HDBB->getTerminator()));
+                  assert(
+                      isa<PHINode>(SubscriptExprInBr.i) ||
+                      BoundaryExprInBr.isConstant() ||
+                      DT.dominates(BoundaryExprInBr.i, HDBB->getTerminator()));
+                }
               }
 
               if ((BK == BoundKind::MAX && FName == CHECK_UB)) {
@@ -1826,7 +1879,65 @@ void LoopCheckPropagation(Function &F,
                   BoundaryExprInBr.dump(llvm::errs());
                   llvm::errs() << "\n";
                 }
-                canPerformHoist = true;
+
+                if (candidateKind == CandidateKind::IncreasingValuesWithLB ||
+                    candidateKind == CandidateKind::LoopsWithDeltaOne ||
+                    candidateKind == CandidateKind::Invariant) {
+                  // loop increases i, and we step into loop, and i has a lower
+                  // bound predicate so this can be hoisted to the (maximum of
+                  // Ai+B could be) <= UB_Bound
+
+                  // maximum of Ai+B = HoistedSubscriptWithMinOrMaxSubstituted
+                  // our new check is
+                  // HoistedSubscriptWithMinOrMaxSubstituted <= UB_Bound
+
+                  // for some cases the predicate only contains constant,
+                  // so we can evaluate it at compile time,
+                  // if this is true, we can remove the check
+                  auto thisCheckCanBeEvaluatedAtCompileTime =
+                      UpperBoundPredicate{
+                          HoistedBound, HoistedSubscriptWithMinOrMaxSubstituted}
+                          .alwaysTrue();
+
+                  if (!thisCheckCanBeEvaluatedAtCompileTime) {
+                    for (auto *InsertBB : HoistDestinationBB) {
+                      auto *insertPoint = InsertBB->getTerminator();
+                      IRB.SetInsertPoint(insertPoint);
+                      Value *bound =
+                          createValueForSubExpr(IRB, insertPoint, HoistedBound);
+                      Value *subscript = createValueForSubExpr(
+                          IRB, insertPoint,
+                          HoistedSubscriptWithMinOrMaxSubstituted);
+                      createCheckCall(IRB, insertPoint, CheckUpper, bound,
+                                      subscript, file);
+                    }
+                  }
+                  ObsoleteChecksDueToHoist.push_back(CB);
+
+                  VERBOSE_PRINT {
+                    YELLOW(llvm::errs())
+                        << "Successfully hoisted check out of loop!\n";
+                  }
+
+                } else if (candidateKind ==
+                           CandidateKind::DecreasingValuesWithUB) {
+
+                  // loop decreases i, and we step into loop, and i has a upper
+                  // bound predicate, since this is a UB check, we can hoist the
+                  // original check
+
+                  for (auto *InsertBB : HoistDestinationBB) {
+                    auto *insertPoint = InsertBB->getTerminator();
+                    IRB.SetInsertPoint(insertPoint);
+                    Value *bound =
+                        createValueForSubExpr(IRB, insertPoint, HoistedBound);
+                    Value *subscript = createValueForSubExpr(IRB, insertPoint,
+                                                             HoistedSubscript);
+                    createCheckCall(IRB, insertPoint, CheckUpper, bound,
+                                    subscript, file);
+                  }
+                  ObsoleteChecksDueToHoist.push_back(CB);
+                }
 
               } else if (BK == BoundKind::MIN && FName == CHECK_LB) {
                 VERBOSE_PRINT {
@@ -1836,12 +1947,106 @@ void LoopCheckPropagation(Function &F,
                   BoundaryExprInBr.dump(llvm::errs());
                   llvm::errs() << "\n";
                 }
-                canPerformHoist = true;
+
+                if (candidateKind == CandidateKind::DecreasingValuesWithUB ||
+                    candidateKind == CandidateKind::LoopsWithDeltaOne ||
+                    candidateKind == CandidateKind::Invariant) {
+                  // loop increases i, and we step into loop, and i has a lower
+                  // bound predicate so this can be hoisted to the (maximum of
+                  // Ai+B could be) >= LB_Bound
+
+                  // maximum of Ai+B = HoistedSubscriptWithMinOrMaxSubstituted
+                  // our new check is
+                  // HoistedSubscriptWithMinOrMaxSubstituted >= LB_Bound
+
+                  // for some cases the predicate only contains constant,
+                  // so we can evaluate it at compile time,
+                  // if this is true, we can remove the check
+                  auto thisCheckCanBeEvaluatedAtCompileTime =
+                      LowerBoundPredicate{
+                          HoistedBound, HoistedSubscriptWithMinOrMaxSubstituted}
+                          .alwaysTrue();
+
+                  if (!thisCheckCanBeEvaluatedAtCompileTime) {
+                    for (auto *InsertBB : HoistDestinationBB) {
+                      auto *insertPoint = InsertBB->getTerminator();
+                      IRB.SetInsertPoint(insertPoint);
+                      Value *bound =
+                          createValueForSubExpr(IRB, insertPoint, HoistedBound);
+                      Value *subscript = createValueForSubExpr(
+                          IRB, insertPoint,
+                          HoistedSubscriptWithMinOrMaxSubstituted);
+                      createCheckCall(IRB, insertPoint, CheckLower, bound,
+                                      subscript, file);
+                    }
+                  }
+                  ObsoleteChecksDueToHoist.push_back(CB);
+
+                  VERBOSE_PRINT {
+                    YELLOW(llvm::errs())
+                        << "Successfully hoisted check out of loop!\n";
+                  }
+
+                } else if (candidateKind ==
+                           CandidateKind::IncreasingValuesWithLB) {
+
+                  for (auto *InsertBB : HoistDestinationBB) {
+                    auto *insertPoint = InsertBB->getTerminator();
+                    IRB.SetInsertPoint(insertPoint);
+                    Value *bound =
+                        createValueForSubExpr(IRB, insertPoint, HoistedBound);
+                    Value *subscript = createValueForSubExpr(IRB, insertPoint,
+                                                             HoistedSubscript);
+                    createCheckCall(IRB, insertPoint, CheckLower, bound,
+                                    subscript, file);
+                  }
+                  ObsoleteChecksDueToHoist.push_back(CB);
+                }
+              } else if (BK == BoundKind::MIN && FName == CHECK_UB) {
+                if (candidateKind != CandidateKind::IncreasingValuesWithLB &&
+                    !isa<PHINode>(HoistedSubscript.i)) {
+                  // loop does not increase i, then the initial incoming value
+                  // is guaranteed to be the maximum possible value in this
+                  // check so we can hoist it without modification
+
+                  for (auto *InsertBB : HoistDestinationBB) {
+                    auto *insertPoint = InsertBB->getTerminator();
+                    IRB.SetInsertPoint(insertPoint);
+                    Value *bound =
+                        createValueForSubExpr(IRB, insertPoint, HoistedBound);
+                    Value *subscript = createValueForSubExpr(IRB, insertPoint,
+                                                             HoistedSubscript);
+                    createCheckCall(IRB, insertPoint, CheckUpper, bound,
+                                    subscript, file);
+                  }
+                  ObsoleteChecksDueToHoist.push_back(CB);
+                } else {
+                  // this check cannot be hoisted
+                }
+              } else if (BK == BoundKind::MAX && FName == CHECK_LB) {
+                if (candidateKind != CandidateKind::DecreasingValuesWithUB &&
+                    !isa<PHINode>(HoistedSubscript.i)) {
+                  // loop does not decrease i, then the initial incoming value
+                  // is guaranteed to be the minimum possible value in this
+                  // check so we can hoist it without modification
+
+                  for (auto *InsertBB : HoistDestinationBB) {
+                    auto *insertPoint = InsertBB->getTerminator();
+                    IRB.SetInsertPoint(insertPoint);
+                    Value *bound =
+                        createValueForSubExpr(IRB, insertPoint, HoistedBound);
+                    Value *subscript = createValueForSubExpr(IRB, insertPoint,
+                                                             HoistedSubscript);
+                    createCheckCall(IRB, insertPoint, CheckLower, bound,
+                                    subscript, file);
+                  }
+                  ObsoleteChecksDueToHoist.push_back(CB);
+                } else {
+                  // this check cannot be hoisted
+                }
               }
             }
           }
-
-          ObsoleteChecksDueToHoist.push_back(CB);
         }
         for (auto *CB : ObsoleteChecksDueToHoist) {
           // cleanup
@@ -1878,11 +2083,16 @@ PreservedAnalyses BoundCheckOptimization::run(Function &F,
   ValuePtrVector ValuesReferencedInSubscript = {};
   ValuePtrVector ValuesReferencedInBound = {};
 
+  if (DUMP_STATS)
+    CountBountCheck(F, "After Insertion");
+
   /** Compute C_GEN, Effects, ValuesReferencedInSubscript,
    * ValuesReferencedInBound */
   ComputeEffects(F, C_GEN, Effects, ValuesReferencedInSubscript,
                  ValuesReferencedInBound, Evaluated, SourceFileName);
 
+  if (DUMP_STATS)
+    CountBountCheck(F, "After Clean");
   /** Modification Analysis */
   if (MODIFICATION) {
     CMap C_IN{};
@@ -1893,12 +2103,15 @@ PreservedAnalyses BoundCheckOptimization::run(Function &F,
     RunModificationAnalysis(F, C_IN, C_OUT, C_GEN, Effects,
                             ValuesReferencedInSubscript);
 
-    ApplyModification(F, C_OUT, C_GEN, ValuesReferencedInSubscript,
-    Evaluated,
+    ApplyModification(F, C_OUT, C_GEN, ValuesReferencedInSubscript, Evaluated,
                       SourceFileName, DT);
   }
 
-  { /** Update C_GEN */
+  if (DUMP_STATS)
+    CountBountCheck(F, "After Modification");
+
+  /** Update C_GEN */
+  {
     C_GEN.clear();
     RecomputeC_GEN(F, C_GEN, ValuesReferencedInSubscript, Evaluated);
   }
@@ -1916,14 +2129,16 @@ PreservedAnalyses BoundCheckOptimization::run(Function &F,
     ApplyElimination(F, C_IN, C_GEN, ValuesReferencedInSubscript);
   }
 
+  if (DUMP_STATS)
+    CountBountCheck(F, "After Elimination");
+
   if (LOOP_PROPAGATION) {
     LoopCheckPropagation(F, ValuesReferencedInSubscript, SourceFileName,
                          Effects, LI, DT);
   }
 
-  // for (const auto &BB : F) {
-  //   BB.print(llvm::errs());
-  // }
+  if (DUMP_STATS)
+    CountBountCheck(F, "After Loop Propagation");
 
   return PreservedAnalyses::none();
 }

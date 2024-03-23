@@ -1,0 +1,10 @@
+main, After Insertion, 1, 1, 2
+main, After Clean, 1, 1, 2
+main, After Modification, 1, 1, 2
+main, After Elimination, 1, 1, 2
+main, After Loop Propagation, 1, 0, 1
+main, After Insertion, 1, 1, 2
+main, After Clean, 1, 1, 2
+main, After Modification, 1, 1, 2
+main, After Elimination, 1, 1, 2
+main, After Loop Propagation, 1, 0, 1

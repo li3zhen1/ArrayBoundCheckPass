@@ -1,0 +1,15 @@
+Usage, After Insertion, 0, 0, 0
+Usage, After Clean, 0, 0, 0
+Usage, After Modification, 0, 0, 0
+Usage, After Elimination, 0, 0, 0
+Usage, After Loop Propagation, 0, 0, 0
+main, After Insertion, 0, 0, 0
+main, After Clean, 0, 0, 0
+main, After Modification, 0, 0, 0
+main, After Elimination, 0, 0, 0
+main, After Loop Propagation, 0, 0, 0
+BFSGraph, After Insertion, 25, 25, 50
+BFSGraph, After Clean, 15, 15, 30
+BFSGraph, After Modification, 18, 16, 34
+BFSGraph, After Elimination, 10, 10, 20
+BFSGraph, After Loop Propagation, 10, 6, 16

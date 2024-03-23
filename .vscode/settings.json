@@ -8,7 +8,4 @@
     "*.tcc": "cpp",
     "istream": "cpp"
   },
-  "github.copilot.enable": {
-    "*": false,
-  }
 }

@@ -4,8 +4,8 @@
 int main(int argc, char *argv[]) {
   int array[N];
   
-  for (int i = 0; i < N + 1; i++) {
-    array[i + 1] = i;
+  for (int i = 0; i < N; i++) {
+    array[i] = i;
   }
 
   return 0;

@@ -17,17 +17,19 @@ constexpr auto CHECK_UB = "checkUpperBound";
 
 #define _DEBUG_PRINT 0
 
-#define VERBOSE_PRINT if (true)
+#define VERBOSE_PRINT if (false)
 
 constexpr bool MODIFICATION = true;
 constexpr bool ELIMINATION = true;
 constexpr bool LOOP_PROPAGATION = true;
-constexpr bool CLEAN_REDUNDANT_CHECK_IN_SAME_BB = true;
+constexpr bool CLEAN_REDUNDANT_CHECK_IN_SAME_BB = false;
+constexpr bool DUMP_STATS = true;
 
 #define RedO llvm::WithColor(O).changeColor(raw_ostream::RED, true, false)
 #define GreenO llvm::WithColor(O).changeColor(raw_ostream::GREEN, true, false)
 
 #define BLUE(O) llvm::WithColor(O).changeColor(raw_ostream::BLUE, true, false)
+#define MAGENTA(O) llvm::WithColor(O).changeColor(raw_ostream::MAGENTA, true, false)
 #define YELLOW(O)                                                              \
   llvm::WithColor(O).changeColor(raw_ostream::YELLOW, true, false)
 

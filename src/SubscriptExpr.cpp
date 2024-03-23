@@ -123,11 +123,11 @@ SubscriptExpr SubscriptExpr::evaluate(const Value *v) {
     SubscriptExpr s1 = evaluate(Op1);
     SubscriptExpr s2 = evaluate(Op2);
 
-    llvm::errs() << "#";
-    s1.dump(llvm::errs());
-    llvm::errs() << " * ";
-    s2.dump(llvm::errs());
-    llvm::errs() << "#\n";
+    // llvm::errs() << "#";
+    // s1.dump(llvm::errs());
+    // llvm::errs() << " * ";
+    // s2.dump(llvm::errs());
+    // llvm::errs() << "#\n";
 
     if (s1.isConstant() && s2.isConstant()) {
       return {0, nullptr, s1.B * s2.B};
