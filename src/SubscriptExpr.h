@@ -3,6 +3,7 @@
 
 #include "llvm/IR/Value.h"
 #include "llvm/Support/raw_ostream.h"
+#include <cstdint>
 
 
 using namespace llvm;
@@ -61,6 +62,9 @@ struct SubscriptExpr {
   SubscriptExpr operator-(int64_t c) const;
 
   SubscriptExpr operator*(int64_t c) const;
+
+  SubscriptExpr substituted(SmallVector<std::pair<const Value *, SubscriptExpr>, 4> &Subs) const;
+  SubscriptExpr substituted(SmallVector<std::pair<const Value *, SubscriptExpr>, 4> &&Subs) const;
 
   /**
    * @brief Get the Identity object, {A,i}

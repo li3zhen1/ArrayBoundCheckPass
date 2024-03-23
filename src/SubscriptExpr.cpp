@@ -68,13 +68,24 @@ SubscriptExpr SubscriptExpr::evaluate(const Value *v) {
     SubscriptExpr s1 = evaluate(Op1);
     SubscriptExpr s2 = evaluate(Op2);
 
+
+    // llvm::errs() << "#";
+    // s1.dump(llvm::errs());
+    // llvm::errs() << " + ";
+    // s2.dump(llvm::errs());
+    // llvm::errs() << "#\n";
+
     if (s1.isConstant()) {
+      // llvm::errs() << "S1 is constant\n";
       return s2 + s1.B;
     } else if (s2.isConstant()) {
+      // llvm::errs() << "S2 is constant\n";
       return s1 + s2.B;
     } else if (s1.i != s2.i) {
+      // llvm::errs() << "s1.i != s2.i\n";
       return {1, v, 0};
     } else {
+      // llvm::errs() << "????\n";
       return s1 + s2;
     }
 
@@ -85,9 +96,17 @@ SubscriptExpr SubscriptExpr::evaluate(const Value *v) {
 
     SubscriptExpr s1 = evaluate(Op1);
     SubscriptExpr s2 = evaluate(Op2);
+    
+
+    // llvm::errs() << "#";
+    // s1.dump(llvm::errs());
+    // llvm::errs() << " - ";
+    // s2.dump(llvm::errs());
+    // llvm::errs() << "#\n";
+
 
     if (s1.isConstant()) {
-      return s2 - s1.B;
+      return {-s2.A, s2.i, s1.B - s2.B};
     } else if (s2.isConstant()) {
       return s1 - s2.B;
     } else if (s1.i != s2.i) {
@@ -104,6 +123,12 @@ SubscriptExpr SubscriptExpr::evaluate(const Value *v) {
     SubscriptExpr s1 = evaluate(Op1);
     SubscriptExpr s2 = evaluate(Op2);
 
+    llvm::errs() << "#";
+    s1.dump(llvm::errs());
+    llvm::errs() << " * ";
+    s2.dump(llvm::errs());
+    llvm::errs() << "#\n";
+
     if (s1.isConstant() && s2.isConstant()) {
       return {0, nullptr, s1.B * s2.B};
     } else if (s1.isConstant()) {
@@ -114,6 +139,10 @@ SubscriptExpr SubscriptExpr::evaluate(const Value *v) {
       return {1, v, 0};
     }
   } else if (isa<ConstantInt>(v)) {
+    // llvm::errs() << "Constant#";
+    // v->print(errs());
+    // llvm::errs() << "#\n";
+
     int64_t B = cast<ConstantInt>(v)->getSExtValue();
     return {1, nullptr, B};
   } else {
@@ -121,9 +150,6 @@ SubscriptExpr SubscriptExpr::evaluate(const Value *v) {
     return {1, v, 0};
   }
 }
-
-
-
 
 const Value *findEarliestLoadLike(const Value *v) {
 #if _DEBUG_PRINT
@@ -143,8 +169,8 @@ const Value *findEarliestLoadLike(const Value *v) {
     const auto Op1 = AO->getOperand(0);
     const auto Op2 = AO->getOperand(1);
 
-    auto* s1 = findEarliestLoadLike(Op1);
-    auto* s2 = findEarliestLoadLike(Op2);
+    auto *s1 = findEarliestLoadLike(Op1);
+    auto *s2 = findEarliestLoadLike(Op2);
 
     if (s1 == nullptr) {
       if (s2 == nullptr) {
@@ -163,8 +189,8 @@ const Value *findEarliestLoadLike(const Value *v) {
     const auto Op1 = AO->getOperand(0);
     const auto Op2 = AO->getOperand(1);
 
-    auto* s1 = findEarliestLoadLike(Op1);
-    auto* s2 = findEarliestLoadLike(Op2);
+    auto *s1 = findEarliestLoadLike(Op1);
+    auto *s2 = findEarliestLoadLike(Op2);
 
     if (s1 == nullptr) {
       if (s2 == nullptr) {
@@ -183,8 +209,8 @@ const Value *findEarliestLoadLike(const Value *v) {
     const auto Op1 = MO->getOperand(0);
     const auto Op2 = MO->getOperand(1);
 
-    auto* s1 = findEarliestLoadLike(Op1);
-    auto* s2 = findEarliestLoadLike(Op2);
+    auto *s1 = findEarliestLoadLike(Op1);
+    auto *s2 = findEarliestLoadLike(Op2);
 
     if (s1 == nullptr) {
       if (s2 == nullptr) {
@@ -207,8 +233,7 @@ const Value *findEarliestLoadLike(const Value *v) {
   }
 }
 
-
-bool SubscriptExpr::isConstant() const { return i == nullptr || A == 0; }
+bool SubscriptExpr::isConstant() const { return (i == nullptr) || (A == 0); }
 
 int64_t SubscriptExpr::getConstant() const {
   assert(isConstant());
@@ -255,4 +280,46 @@ SubscriptIndentity SubscriptExpr::getIdentity() const { return {A, i}; }
 int64_t SubscriptExpr::getConstantDifference(const SubscriptExpr &rhs) const {
   assert(getIdentity() == rhs.getIdentity());
   return B - rhs.B;
+}
+
+SubscriptExpr SubscriptExpr::substituted(
+    SmallVector<std::pair<const Value *, SubscriptExpr>, 4> &EvaluatedValues)
+    const {
+  SubscriptExpr substituted = *this;
+
+  {
+    auto sub = llvm::find_if(EvaluatedValues,
+                             [&](auto &p) { return p.first == substituted.i; });
+    if (sub != EvaluatedValues.end()) {
+      // A * (A' * i + B') + B
+      substituted = {
+          substituted.A * sub->second.A,
+          sub->second.i,
+          substituted.A * sub->second.B + substituted.B,
+      };
+    }
+  }
+
+  return substituted;
+}
+
+SubscriptExpr SubscriptExpr::substituted(
+    SmallVector<std::pair<const Value *, SubscriptExpr>, 4> &&EvaluatedValues)
+    const {
+  SubscriptExpr substituted = *this;
+
+  {
+    auto sub = llvm::find_if(EvaluatedValues,
+                             [&](auto &p) { return p.first == substituted.i; });
+    if (sub != EvaluatedValues.end()) {
+      // A * (A' * i + B') + B
+      substituted = {
+          substituted.A * sub->second.A,
+          sub->second.i,
+          substituted.A * sub->second.B + substituted.B,
+      };
+    }
+  }
+
+  return substituted;
 }

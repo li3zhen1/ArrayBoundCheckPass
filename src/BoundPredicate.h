@@ -60,6 +60,11 @@ struct UpperBoundPredicate : public BoundPredicateBase {
 
   bool subsumes(const UpperBoundPredicate &Other) const;
   bool subsumes(const LowerBoundPredicate &Other) const;
+  bool judgeOnEvaluatedValues(
+      SmallVector<std::pair<const Value *, SubscriptExpr>, 4> &EvaluatedValues)
+      const;
+
+  bool alwaysTrue() const;
 };
 
 struct LowerBoundPredicate : public BoundPredicateBase {
@@ -70,6 +75,12 @@ struct LowerBoundPredicate : public BoundPredicateBase {
 
   bool subsumes(const UpperBoundPredicate &Other) const;
   bool subsumes(const LowerBoundPredicate &Other) const;
+  bool judgeOnEvaluatedValues(
+      SmallVector<std::pair<const Value *, SubscriptExpr>, 4> &EvaluatedValues)
+      const;
+
+  bool alwaysTrue() const;
+
 };
 
 typedef std::variant<UpperBoundPredicate, LowerBoundPredicate> BoundPredicate;

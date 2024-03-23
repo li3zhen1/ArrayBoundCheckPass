@@ -1,5 +1,6 @@
 #include "BoundPredicate.h"
 #include "CommonDef.h"
+#include "SubscriptExpr.h"
 
 BoundPredicateIdentity BoundPredicateBase::getIdentity() const {
   return {Bound.getIdentity(), Index.getIdentity()};
@@ -129,3 +130,43 @@ bool LowerBoundPredicate::subsumes(const LowerBoundPredicate &Other) const {
 }
 
 #pragma endregion
+
+bool UpperBoundPredicate::judgeOnEvaluatedValues(
+    SmallVector<std::pair<const Value *, SubscriptExpr>, 4> &EvaluatedValues)
+    const {
+
+  SubscriptExpr substitutedBound = Bound.substituted(EvaluatedValues);
+  SubscriptExpr substitutedIndex = Index.substituted(EvaluatedValues);
+
+  if (substitutedBound.getIdentity() == substitutedIndex.getIdentity()) {
+    return substitutedBound.B >= substitutedIndex.B;
+  }
+  return false;
+}
+
+bool LowerBoundPredicate::judgeOnEvaluatedValues(
+    SmallVector<std::pair<const Value *, SubscriptExpr>, 4> &EvaluatedValues)
+    const {
+
+  SubscriptExpr substitutedBound = Bound.substituted(EvaluatedValues);
+  SubscriptExpr substitutedIndex = Index.substituted(EvaluatedValues);
+
+  if (substitutedBound.getIdentity() == substitutedIndex.getIdentity()) {
+    return substitutedBound.B <= substitutedIndex.B;
+  }
+  return false;
+}
+
+bool LowerBoundPredicate::alwaysTrue() const {
+  if (Bound.getIdentity() != Index.getIdentity()) {
+    return false;
+  }
+  return Bound.B <= Index.B;
+}
+
+bool UpperBoundPredicate::alwaysTrue() const {
+  if (Bound.getIdentity() != Index.getIdentity()) {
+    return false;
+  }
+  return Bound.B >= Index.B;
+}

@@ -231,7 +231,6 @@ void ComputeEffects(Function &F, CMap &Grouped_C_GEN, EffectMap &effects,
 
         const Value *bound = CB->getArgOperand(0);
         const Value *checked = CB->getArgOperand(1);
-
         const SubscriptExpr BoundExpr = SubscriptExpr::evaluate(bound);
         const SubscriptExpr SubExpr = SubscriptExpr::evaluate(checked);
 
@@ -400,7 +399,7 @@ void ComputeEffects(Function &F, CMap &Grouped_C_GEN, EffectMap &effects,
 
                   // modify the earliest check's bound to be the tightest bound
                   // We only need to add the constant
-                  
+
                   if (constantDiffOfBound != 0) {
                     uppermostCheckInst->print(llvm::errs());
                     llvm::errs() << "\n";
@@ -540,8 +539,9 @@ void ComputeEffects(Function &F, CMap &Grouped_C_GEN, EffectMap &effects,
   }
 }
 
-__attribute__((always_inline)) inline EffectOnSubscript
-getEffect(const SmallVector<SubscriptExpr> &SE, const Value *V) {
+// __attribute__((always_inline)) inline
+EffectOnSubscript getEffect(const SmallVector<SubscriptExpr> &SE,
+                            const Value *V) {
   if (SE.empty()) {
     return {EffectKind::Unchanged, std::nullopt};
   }
@@ -1189,7 +1189,7 @@ void ApplyElimination(Function &F, CMap &Grouped_C_IN, CMap &C_GEN,
 #undef EXTRACT_VALUE
 }
 
-enum CandidateKind {
+enum class CandidateKind : unsigned {
   NotCandidate,
   Invariant,
   IncreasingValuesWithLB,
@@ -1275,6 +1275,53 @@ auto IdentifyCandidatesForPropagation(EffectMap &Effects, Loop *L,
   return CandidateKind::NotCandidate;
 };
 
+// Find all possible initial values of a value at a given BB
+// so that we can tell this value will or will not lead us
+// to step into the loop.
+// If we always step into the loop, we can propagate the check
+// outside the loop.
+SmallVector<SubscriptExpr, 4> findAllPossibleInitialValuesAtBB(Value *V,
+                                                               Loop *L) {
+  SubscriptExpr SE = SubscriptExpr::evaluate(V);
+  SmallVector<SubscriptExpr, 4> Result{};
+  if (SE.isConstant()) {
+    Result.push_back(SE);
+    return Result;
+  }
+  if (isa<PHINode>(SE.i)) {
+    auto PhiV = cast<PHINode>(V);
+    for (auto *Incoming : PhiV->blocks()) {
+      if (L->contains(cast<BasicBlock>(Incoming))) {
+        continue;
+      }
+      auto *IncomingBB = cast<BasicBlock>(Incoming);
+      auto *IncomingValue = PhiV->getIncomingValueForBlock(IncomingBB);
+      auto allPossibleIncomingValues =
+          findAllPossibleInitialValuesAtBB(IncomingValue, L);
+
+      for (auto &PossibleIncomingValue : allPossibleIncomingValues) {
+        Result.push_back(SE.substituted({{SE.i, PossibleIncomingValue}}));
+      }
+    }
+  } else if (isa<ConstantInt>(V)) {
+    Result.push_back(SE);
+  } else {
+    for (auto user : SE.i->users()) {
+      if (L->contains(cast<Instruction>(user)->getParent())) {
+        continue;
+      }
+      if (isa<StoreInst>(user)) {
+        auto SI = cast<StoreInst>(user);
+        if (SI->getPointerOperand() == SE.i) {
+          Result.push_back(SE.substituted(
+              {{SE.i, SubscriptExpr::evaluate(SI->getValueOperand())}}));
+        }
+      }
+    }
+  }
+  return Result;
+};
+
 void LoopCheckPropagation(Function &F,
                           ValuePtrVector &ValuesReferencedInSubscript,
                           Constant *file, EffectMap &Effects, LoopInfo &LI,
@@ -1293,6 +1340,12 @@ void LoopCheckPropagation(Function &F,
   FunctionCallee CheckUpper = F.getParent()->getOrInsertFunction(
       CHECK_UB, Attr, IRB.getVoidTy(), IRB.getInt64Ty(), IRB.getInt64Ty(),
       IRB.getPtrTy(), IRB.getInt64Ty());
+
+  llvm::errs() << "before LoopCheckPropagation\n";
+  for (auto &BB : F) {
+    BB.print(llvm::errs());
+  }
+  llvm::errs() << "start LoopCheckPropagation\n";
 
   for (auto *ValueWeCareAbout : ValuesReferencedInSubscript) {
     VERBOSE_PRINT {
@@ -1496,12 +1549,19 @@ void LoopCheckPropagation(Function &F,
           BlockThatDominatesAllExits->printAsOperand(llvm::errs());
           YELLOW(llvm::errs()) << " ================== \n";
         }
-        SmallVector<CallInst *, 4> obsoleteChecks{};
-        SmallVector<BasicBlock *, 4> HositDestinationBB{};
+
+        SmallVector<BasicBlock *, 4> HoistDestinationBB{};
         for (auto *Pred : predecessors(BlockThatDominatesAllExits)) {
-          HositDestinationBB.push_back(Pred);
+          if (L->contains(Pred)) {
+            continue;
+          }
+          HoistDestinationBB.push_back(Pred);
+        }
+        if (HoistDestinationBB.empty()) {
+          continue;
         }
 
+        SmallVector<CallInst *, 4> ObsoleteChecksDueToHoist{};
         for (auto &Inst : *BlockThatDominatesAllExits) {
           if (!isa<CallInst>(Inst))
             continue;
@@ -1525,127 +1585,265 @@ void LoopCheckPropagation(Function &F,
           SubscriptExpr HoistedBound =
               SubscriptExpr::evaluate(CB->getArgOperand(0));
 
+          VERBOSE_PRINT {
+            CB->print(llvm::errs());
+            llvm::errs() << "### HoistedBound: ";
+            HoistedBound.dump(llvm::errs());
+            llvm::errs() << "\n";
+          }
+
           bool canPerformHoist = false;
 
-          if (candidateKind == CandidateKind::LoopsWithDeltaOne) {
+          // if (candidateKind == CandidateKind::LoopsWithDeltaOne)
+          {
             // replaced by the check “lb < min op c, max op c < ub” outside the
             // loop.
-            llvm::errs() << "--- Replace by the check “lb < min op c, max op c "
-                            "< ub” outside the loop.\n";
             auto *Term = BlockThatDominatesAllExits->getTerminator();
-            if (isa<BranchInst>(Term)) {
-              auto *BI = cast<BranchInst>(Term);
-              if (BI->isConditional()) {
-                auto *Cond = BI->getCondition();
-                auto *BBTrue = BI->getSuccessor(0);
-                auto *BBFalse = BI->getSuccessor(1);
-                if (isa<ICmpInst>(Cond)) {
-                  auto *ICmp = cast<ICmpInst>(Cond);
-                  auto ICmpKind = ICmp->getPredicate();
-                  auto lhsVal = ICmp->getOperand(0);
-                  auto rhsVal = ICmp->getOperand(1);
 
-                  auto lhsSubExpr = SubscriptExpr::evaluate(lhsVal);
-                  auto rhsSubExpr = SubscriptExpr::evaluate(rhsVal);
+            if (!isa<BranchInst>(Term))
+              continue;
 
-                  bool lhsIsSubscript = lhsSubExpr.i == ValueWeCareAbout;
-                  bool rhsIsSubscript = rhsSubExpr.i == ValueWeCareAbout;
+            auto *BI = cast<BranchInst>(Term);
+            if (!BI->isConditional())
+              continue;
 
-                  if (!lhsIsSubscript && !rhsIsSubscript)
-                    continue;
+            auto *Cond = BI->getCondition();
+            auto *BBTrue = BI->getSuccessor(0);
+            auto *BBFalse = BI->getSuccessor(1);
 
-                  enum class BoundKind : bool {
-                    MAX,
-                    MIN,
-                  };
+            // both inside or outside the loop
+            if (!(L->contains(BBTrue) ^ L->contains(BBFalse)))
+              continue;
 
-                  BoundKind BK = BoundKind::MAX;
+            // Now let's see if we truely step into this loop
+            if (isa<ICmpInst>(Cond)) {
+              auto *ICmp = cast<ICmpInst>(Cond);
+              auto ICmpKind = ICmp->getPredicate();
+              auto lhsVal = ICmp->getOperand(0);
+              auto rhsVal = ICmp->getOperand(1);
 
-                  switch (ICmpKind) {
-                  case CmpInst::Predicate::ICMP_SGT:
-                  case CmpInst::Predicate::ICMP_UGT:
-                    // a>b   =>     a >= b + 1
-                    rhsSubExpr.B += 1;
-                  case CmpInst::Predicate::ICMP_SGE:
-                  case CmpInst::Predicate::ICMP_UGE:
-                    if (lhsIsSubscript) {
-                      BK = BoundKind::MIN;
-                    } else {
-                      BK = BoundKind::MAX;
+              auto lhsSubExpr = SubscriptExpr::evaluate(lhsVal);
+              auto rhsSubExpr = SubscriptExpr::evaluate(rhsVal);
+
+              auto allPossibleLhsInitialValues =
+                  findAllPossibleInitialValuesAtBB(lhsVal, L);
+
+              auto allPossibleRhsInitialValues =
+                  findAllPossibleInitialValuesAtBB(rhsVal, L);
+
+              VERBOSE_PRINT {
+                llvm::errs() << " - HoistedSubscript: ";
+                HoistedSubscript.dump(llvm::errs());
+                llvm::errs() << "\n";
+                llvm::errs() << "   - ICmp: ";
+                ICmp->print(llvm::errs());
+                llvm::errs() << "\n";
+                llvm::errs() << "   - lhsSubExpr: ";
+                lhsSubExpr.dump(llvm::errs());
+                llvm::errs() << "\n";
+                llvm::errs() << "   - rhsSubExpr: ";
+                rhsSubExpr.dump(llvm::errs());
+                llvm::errs() << "\n";
+                llvm::errs() << "   - ValueWeCareAbout: ";
+                ValueWeCareAbout->printAsOperand(llvm::errs());
+                llvm::errs() << "\n";
+                llvm::errs() << "       - All possible initial values of ";
+                lhsVal->printAsOperand(llvm::errs());
+                llvm::errs() << " : ";
+                for (auto &SE : allPossibleLhsInitialValues) {
+                  SE.dump(llvm::errs());
+                  llvm::errs() << ", ";
+                }
+                llvm::errs() << "\n";
+
+                llvm::errs() << "       - All possible initial values of ";
+                rhsVal->printAsOperand(llvm::errs());
+                llvm::errs() << " : ";
+                for (auto &SE : allPossibleRhsInitialValues) {
+                  SE.dump(llvm::errs());
+                  llvm::errs() << ", ";
+                }
+                llvm::errs() << "\n";
+              }
+
+              bool lhsIsSubscript = lhsSubExpr.i == ValueWeCareAbout;
+              bool rhsIsSubscript = rhsSubExpr.i == ValueWeCareAbout;
+
+              if (!lhsIsSubscript && !rhsIsSubscript)
+                continue;
+
+              enum class BoundKind : bool {
+                MAX,
+                MIN,
+              };
+
+              BoundKind BK = BoundKind::MAX;
+
+              // does this br inst jump to the loop if cond is true or false?
+              // We can only hoist it outside the loop if it always jumps
+              bool alwaysJumpInsideLoop = true;
+
+              // to judge if we always jump inside the loop, we try to evaluate
+              // all possible initial states before reaching the loop header
+              // and see if the condition is always true or false.
+
+              switch (ICmpKind) {
+              case CmpInst::Predicate::ICMP_SGT:
+              case CmpInst::Predicate::ICMP_UGT:
+                // a>b   =>     a >= b + 1
+                rhsSubExpr.B += 1;
+              case CmpInst::Predicate::ICMP_SGE:
+              case CmpInst::Predicate::ICMP_UGE:
+                if (lhsIsSubscript) {
+                  BK = BoundKind::MIN;
+                } else {
+                  BK = BoundKind::MAX;
+                }
+
+                if (L->contains(BBTrue)) {
+                  // lhs >= rhs
+                  for (auto &LhsSub : allPossibleLhsInitialValues) {
+                    for (auto &RhsSub : allPossibleRhsInitialValues) {
+                      auto predicate = UpperBoundPredicate{LhsSub, RhsSub};
+                      if (!predicate.alwaysTrue()) {
+                        alwaysJumpInsideLoop = false;
+                        break;
+                      }
                     }
-                    break;
-
-                  case CmpInst::Predicate::ICMP_SLT:
-                  case CmpInst::Predicate::ICMP_ULT:
-                    // a<b   =>     a <= b - 1
-                    rhsSubExpr.B -= 1;
-                  case CmpInst::Predicate::ICMP_SLE:
-                  case CmpInst::Predicate::ICMP_ULE:
-                    if (lhsIsSubscript) {
-                      BK = BoundKind::MAX;
-                    } else {
-                      BK = BoundKind::MIN;
-                    }
-                    break;
-
-                  default:
-                    llvm_unreachable("Unimplemented ICmpKind!!");
                   }
-
-                  // does this br inst jump to the loop if cond is true or
-                  // false?
-                  auto jumpInsideLoopIfTrue = L->contains(BBTrue);
-                  auto jumpInsideLoopIfFalse = L->contains(BBFalse);
-
-                  assert(jumpInsideLoopIfTrue != jumpInsideLoopIfFalse);
-
-                  SubscriptExpr Subscript =
-                      lhsIsSubscript ? lhsSubExpr : rhsSubExpr;
-                  SubscriptExpr BoundaryValueOfSubscript =
-                      lhsIsSubscript ? rhsSubExpr : lhsSubExpr;
-
-                  for (const auto *HDBB : HositDestinationBB) {
-                    assert(isa<PHINode>(Subscript.i) ||
-                           Subscript.isConstant() ||
-                           DT.dominates(Subscript.i, HDBB->getTerminator()));
-                    assert(isa<PHINode>(Subscript.i) ||
-                           BoundaryValueOfSubscript.isConstant() ||
-                           DT.dominates(BoundaryValueOfSubscript.i,
-                                        HDBB->getTerminator()));
-                  }
-
-                  auto Diff = Subscript.getConstantDifference(HoistedSubscript);
-                  BoundaryValueOfSubscript.B -= Diff;
-
-                  if ((BK == BoundKind::MAX && FName == CHECK_UB)) {
-                    VERBOSE_PRINT {
-                      llvm::errs() << "Found a check replacable by max: MAX(";
-                      HoistedSubscript.dump(llvm::errs());
-                      llvm::errs() << ") = ";
-                      BoundaryValueOfSubscript.dump(llvm::errs());
-                      llvm::errs() << "\n";
+                } else {
+                  // to judge !(lhs >= rhs), we need to check lhs < rhs => lhs
+                  // <= rhs - 1
+                  for (auto &LhsSub : allPossibleLhsInitialValues) {
+                    for (auto &RhsSub : allPossibleRhsInitialValues) {
+                      auto predicate = LowerBoundPredicate{
+                          LhsSub, RhsSub - 1}; // lhs <= rhs - 1
+                      if (!predicate.alwaysTrue()) {
+                        alwaysJumpInsideLoop = false;
+                        break;
+                      }
                     }
-
-                    canPerformHoist = true;
-
-                  } else if (BK == BoundKind::MIN && FName == CHECK_LB) {
-                    VERBOSE_PRINT {
-                      llvm::errs() << "Found a check replacable by min: MIN(";
-                      HoistedSubscript.dump(llvm::errs());
-                      llvm::errs() << ") = ";
-                      BoundaryValueOfSubscript.dump(llvm::errs());
-                      llvm::errs() << "\n";
-                    }
-                    canPerformHoist = true;
                   }
                 }
+                break;
+
+              case CmpInst::Predicate::ICMP_SLT:
+              case CmpInst::Predicate::ICMP_ULT:
+                // a<b   =>     a <= b - 1
+                rhsSubExpr.B -= 1;
+              case CmpInst::Predicate::ICMP_SLE:
+              case CmpInst::Predicate::ICMP_ULE:
+                if (lhsIsSubscript) {
+                  BK = BoundKind::MAX;
+                } else {
+                  BK = BoundKind::MIN;
+                }
+                if (L->contains(BBTrue)) {
+                  // lhs <= rhs
+                  for (auto &LhsSub : allPossibleLhsInitialValues) {
+                    for (auto &RhsSub : allPossibleRhsInitialValues) {
+                      auto predicate =
+                          LowerBoundPredicate{LhsSub, RhsSub}; // lhs <= rhs
+                      if (!predicate.alwaysTrue()) {
+                        alwaysJumpInsideLoop = false;
+                        break;
+                      }
+                    }
+                  }
+                } else {
+                  // to judge !(lhs <= rhs), only need to check lhs > rhs => lhs
+                  // >= rhs + 1
+                  for (auto &LhsSub : allPossibleLhsInitialValues) {
+                    for (auto &RhsSub : allPossibleRhsInitialValues) {
+                      auto predicate = UpperBoundPredicate{
+                          LhsSub, RhsSub + 1}; // lhs >= rhs + 1
+                      if (!predicate.alwaysTrue()) {
+                        alwaysJumpInsideLoop = false;
+                        break;
+                      }
+                    }
+                  }
+                }
+                break;
+
+              default:
+                llvm_unreachable("Unimplemented ICmpKind!!");
+              }
+
+              VERBOSE_PRINT {
+                YELLOW(llvm::errs())
+                    << "Always jump inside loop: " << alwaysJumpInsideLoop
+                    << "\n";
+              }
+
+              SubscriptExpr SubscriptExprInBr =
+                  lhsIsSubscript ? lhsSubExpr : rhsSubExpr;
+
+              SubscriptExpr BoundaryExprInBr =
+                  lhsIsSubscript ? rhsSubExpr : lhsSubExpr;
+
+              // We have SubscriptExprInBr <op> BoundaryExprInBr
+              // To hoist the check Predicate {HoistedBound, HoistedSubscript}
+
+              // Now we find the bound of ValueWeCareAbout by solving the
+              // equation
+              // FIXME: precision loss
+              BoundaryExprInBr.B -= SubscriptExprInBr.B;
+              BoundaryExprInBr.B /= SubscriptExprInBr.A;
+              BoundaryExprInBr.A /= SubscriptExprInBr.A;
+
+              // now we have predicate: ValueWeCareAbout <op> BoundaryExprInBr
+              // Do the substitution
+              SubscriptExpr HoistedSubscriptWithMinOrMaxSubstituted =
+                  HoistedSubscript.substituted(
+                      {{ValueWeCareAbout, BoundaryExprInBr}});
+
+              VERBOSE_PRINT {
+                YELLOW(llvm::errs())
+                    << "HoistedSubscriptWithMinOrMaxSubstituted: ";
+                HoistedSubscriptWithMinOrMaxSubstituted.dump(llvm::errs());
+                llvm::errs() << " <=> HoistedBound:";
+                HoistedBound.dump(llvm::errs());
+                llvm::errs() << "\n";
+              }
+
+              // check if
+              for (const auto *HDBB : HoistDestinationBB) {
+                assert(
+                    isa<PHINode>(SubscriptExprInBr.i) ||
+                    SubscriptExprInBr.isConstant() ||
+                    DT.dominates(SubscriptExprInBr.i, HDBB->getTerminator()));
+                assert(isa<PHINode>(SubscriptExprInBr.i) ||
+                       BoundaryExprInBr.isConstant() ||
+                       DT.dominates(BoundaryExprInBr.i, HDBB->getTerminator()));
+              }
+
+              if ((BK == BoundKind::MAX && FName == CHECK_UB)) {
+                VERBOSE_PRINT {
+                  llvm::errs() << "Found a check replacable by max: MAX(";
+                  HoistedSubscript.dump(llvm::errs());
+                  llvm::errs() << ") = ";
+                  BoundaryExprInBr.dump(llvm::errs());
+                  llvm::errs() << "\n";
+                }
+                canPerformHoist = true;
+
+              } else if (BK == BoundKind::MIN && FName == CHECK_LB) {
+                VERBOSE_PRINT {
+                  llvm::errs() << "Found a check replacable by min: MIN(";
+                  HoistedSubscript.dump(llvm::errs());
+                  llvm::errs() << ") = ";
+                  BoundaryExprInBr.dump(llvm::errs());
+                  llvm::errs() << "\n";
+                }
+                canPerformHoist = true;
               }
             }
           }
 
-          obsoleteChecks.push_back(CB);
+          ObsoleteChecksDueToHoist.push_back(CB);
         }
-        for (auto *CB : obsoleteChecks) {
+        for (auto *CB : ObsoleteChecksDueToHoist) {
           // cleanup
           Value *Bound = CB->getArgOperand(0);
           Value *Index = CB->getArgOperand(1);
@@ -1695,7 +1893,8 @@ PreservedAnalyses BoundCheckOptimization::run(Function &F,
     RunModificationAnalysis(F, C_IN, C_OUT, C_GEN, Effects,
                             ValuesReferencedInSubscript);
 
-    ApplyModification(F, C_OUT, C_GEN, ValuesReferencedInSubscript, Evaluated,
+    ApplyModification(F, C_OUT, C_GEN, ValuesReferencedInSubscript,
+    Evaluated,
                       SourceFileName, DT);
   }
 
@@ -1717,12 +1916,12 @@ PreservedAnalyses BoundCheckOptimization::run(Function &F,
     ApplyElimination(F, C_IN, C_GEN, ValuesReferencedInSubscript);
   }
 
-  // if (LOOP_PROPAGATION) {
-  //   LoopCheckPropagation(F, ValuesReferencedInSubscript, SourceFileName,
-  //                        Effects, LI, DT);
-  // }
+  if (LOOP_PROPAGATION) {
+    LoopCheckPropagation(F, ValuesReferencedInSubscript, SourceFileName,
+                         Effects, LI, DT);
+  }
 
-  // for (const auto& BB: F) {
+  // for (const auto &BB : F) {
   //   BB.print(llvm::errs());
   // }
 
