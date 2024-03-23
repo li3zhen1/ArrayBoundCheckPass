@@ -1,5 +1,0 @@
-main, After Insertion, 3, 3, 6
-main, After Clean, 3, 3, 6
-main, After Modification, 4, 4, 8
-main, After Elimination, 1, 2, 3
-main, After Loop Propagation, 1, 2, 3
