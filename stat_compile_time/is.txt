@@ -1,30 +1,24 @@
 randlc, After Insertion, 0, 0, 0
-randlc, After Clean, 0, 0, 0
 randlc, After Modification, 0, 0, 0
 randlc, After Elimination, 0, 0, 0
 randlc, After Loop Propagation, 0, 0, 0
 create_seq, After Insertion, 1, 1, 2
-create_seq, After Clean, 1, 1, 2
 create_seq, After Modification, 1, 1, 2
 create_seq, After Elimination, 1, 1, 2
 create_seq, After Loop Propagation, 1, 0, 1
 full_verify, After Insertion, 5, 5, 10
-full_verify, After Clean, 5, 5, 10
 full_verify, After Modification, 5, 5, 10
-full_verify, After Elimination, 5, 5, 10
+full_verify, After Elimination, 3, 3, 6
 full_verify, After Loop Propagation, 3, 1, 4
 c_print_results, After Insertion, 0, 0, 0
-c_print_results, After Clean, 0, 0, 0
 c_print_results, After Modification, 0, 0, 0
 c_print_results, After Elimination, 0, 0, 0
 c_print_results, After Loop Propagation, 0, 0, 0
 rank, After Insertion, 18, 18, 36
-rank, After Clean, 18, 18, 36
 rank, After Modification, 19, 19, 38
-rank, After Elimination, 16, 16, 32
-rank, After Loop Propagation, 13, 6, 19
+rank, After Elimination, 12, 12, 24
+rank, After Loop Propagation, 12, 5, 17
 main, After Insertion, 4, 4, 8
-main, After Clean, 4, 4, 8
 main, After Modification, 4, 4, 8
-main, After Elimination, 4, 4, 8
+main, After Elimination, 1, 1, 2
 main, After Loop Propagation, 1, 0, 1

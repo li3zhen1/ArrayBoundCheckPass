@@ -1,0 +1,10 @@
+main, After Insertion, 11, 11, 22
+main, After Clean, 11, 11, 22
+main, After Modification, 11, 11, 22
+main, After Elimination, 11, 11, 22
+main, After Loop Propagation, 11, 11, 22
+main, After Insertion, 11, 11, 22
+main, After Clean, 11, 11, 22
+main, After Modification, 11, 11, 22
+main, After Elimination, 4, 4, 8
+main, After Loop Propagation, 4, 4, 8
