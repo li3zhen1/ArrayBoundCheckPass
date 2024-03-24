@@ -1,0 +1,9 @@
+is,22784,24800
+bfs,14384,15728
+dither,31984,34992
+jacobi-1d,5840,6624
+malloc_1d_array,5568,5968
+static_1d_array,4176,4672
+global_1d_array,4256,4752
+check_elimination,3728,4160
+check_modification,3744,4176

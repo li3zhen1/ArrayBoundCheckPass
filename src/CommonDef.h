@@ -17,19 +17,43 @@ constexpr auto CHECK_UB = "checkUpperBound";
 
 #define _DEBUG_PRINT 0
 
-#define VERBOSE_PRINT if (false)
+// #ifdef VERBOSE_PRINT_LEVEL
+// #else
+#define VERBOSE_PRINT_LEVEL 0
+// #endif
 
-constexpr bool MODIFICATION = true;
-constexpr bool ELIMINATION = true;
-constexpr bool LOOP_PROPAGATION = true;
-constexpr bool CLEAN_REDUNDANT_CHECK_IN_SAME_BB = true;
-constexpr bool DUMP_STATS = true;
+#define VERBOSE_PRINT if (VERBOSE_PRINT_LEVEL)
+
+// #ifdef MODIFICATION
+// #else
+#define MODIFICATION false
+// #endif
+
+// #ifdef ELIMINATION
+// #else
+#define ELIMINATION false
+// #endif
+
+// #ifdef LOOP_PROPAGATION
+// #else
+#define LOOP_PROPAGATION false
+// #endif
+
+// #ifdef CLEAN_REDUNDANT_CHECK_IN_SAME_BB
+// #else
+#define CLEAN_REDUNDANT_CHECK_IN_SAME_BB ELIMINATION
+// #endif
+
+// #ifndef DUMP_STATS
+#define DUMP_STATS false
+// #endif
 
 #define RedO llvm::WithColor(O).changeColor(raw_ostream::RED, true, false)
 #define GreenO llvm::WithColor(O).changeColor(raw_ostream::GREEN, true, false)
 
 #define BLUE(O) llvm::WithColor(O).changeColor(raw_ostream::BLUE, true, false)
-#define MAGENTA(O) llvm::WithColor(O).changeColor(raw_ostream::MAGENTA, true, false)
+#define MAGENTA(O)                                                             \
+  llvm::WithColor(O).changeColor(raw_ostream::MAGENTA, true, false)
 #define YELLOW(O)                                                              \
   llvm::WithColor(O).changeColor(raw_ostream::YELLOW, true, false)
 

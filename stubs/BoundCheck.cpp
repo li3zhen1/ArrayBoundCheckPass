@@ -20,32 +20,36 @@ extern "C" {
 //       std::cerr << "#" << line;
 //     }
 //     std::cerr << " while "
-//               << "subscripting " << subscript << " to array of size " << bound
+//               << "subscripting " << subscript << " to array of size " <<
+//               bound
 //               << std::endl;
 //   }
 // }
 
 void checkLowerBound(int bound, int subscript, const char *file, int line) {
-  std::cerr << "lb " << bound << "≤" << subscript << std::endl;
+  // std::cerr << "lb " << bound << "≤" << subscript << std::endl;
   if (subscript < bound) {
-    std::cerr << "Assertion failed at " << file;
+    std::cerr << "\033[1;31mAssertion failed at " << file;
     if (line > 0) {
       std::cerr << "#" << line;
     }
+    std::cerr << "\033[0m" << std::endl;
   }
 }
 
 void checkUpperBound(int bound, int subscript, const char *file, int line) {
-  std::cerr << "ub \t" << subscript << "≤" << bound << std::endl;
+  // std::cerr << "ub \t" << subscript << "≤" << bound << std::endl;
   if (subscript > bound) {
-    std::cerr << "Assertion failed at " << file;
+    std::cerr << "\033[1;31mAssertion failed at " << file;
     if (line > 0) {
       std::cerr << "#" << line;
     }
+    std::cerr << "\033[0m" << std::endl;
   }
 }
 
-void runtimeIndexOutOfBounds(int subscript, int bound, const char *file, int line) {
+void runtimeIndexOutOfBounds(int subscript, int bound, const char *file,
+                             int line) {
   std::cerr << "Array out of bound at " << file;
   if (line > 0) {
     std::cerr << "#" << line;

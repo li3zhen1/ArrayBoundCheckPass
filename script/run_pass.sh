@@ -38,6 +38,7 @@ fi
 BENCH_TRANS="${1}-transformed.bc"
 BENCH_TRANS_LL="${1}-transformed.ll"
 BENCH_LL="${1}-original.ll"
+BENCH_LL="${1}-original.bc"
 echo "==============================Transform LLVM IR========================================"
 echo "opt -load-pass-plugin \"${PLUGIN}\" -passes=${PASS} \"${BENCH}\" -o \"${BENCH_TRANS}\""
 opt -load-pass-plugin "${PLUGIN}" -passes=${PASS} "${BENCH}" -o "${BENCH_TRANS}"

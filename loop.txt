@@ -8,3 +8,75 @@ main, After Clean, 11, 11, 22
 main, After Modification, 11, 11, 22
 main, After Elimination, 4, 4, 8
 main, After Loop Propagation, 4, 4, 8
+main, After Insertion, 3, 3, 6
+main, After Modification, 3, 3, 6
+main, After Elimination, 1, 2, 3
+main, After Loop Propagation, 1, 2, 3
+main, After Insertion, 3, 3, 6
+main, After Modification, 3, 3, 6
+main, After Elimination, 1, 2, 3
+main, After Loop Propagation, 1, 2, 3
+main, After Insertion, 3, 3, 6
+main, After Modification, 3, 3, 6
+main, After Elimination, 1, 2, 3
+main, After Loop Propagation, 1, 2, 3
+main, After Insertion, 3, 3, 6
+main, After Modification, 3, 3, 6
+main, After Elimination, 1, 2, 3
+main, After Loop Propagation, 1, 2, 3
+main, After Insertion, 3, 3, 6
+main, After Modification, 3, 3, 6
+main, After Elimination, 1, 2, 3
+main, After Loop Propagation, 1, 2, 3
+main, After Insertion, 3, 3, 6
+main, After Modification, 3, 3, 6
+main, After Elimination, 1, 2, 3
+main, After Loop Propagation, 1, 2, 3
+main, After Insertion, 3, 3, 6
+main, After Modification, 3, 3, 6
+main, After Elimination, 1, 2, 3
+main, After Loop Propagation, 1, 2, 3
+main, After Insertion, 3, 3, 6
+main, After Modification, 3, 3, 6
+main, After Elimination, 3, 3, 6
+main, After Loop Propagation, 3, 3, 6
+main, After Insertion, 3, 3, 6
+main, After Modification, 3, 3, 6
+main, After Elimination, 3, 3, 6
+main, After Loop Propagation, 3, 3, 6
+main, After Insertion, 3, 3, 6
+main, After Modification, 3, 3, 6
+main, After Elimination, 1, 2, 3
+main, After Loop Propagation, 1, 2, 3
+main, After Insertion, 3, 3, 6
+main, After Modification, 3, 3, 6
+main, After Elimination, 1, 2, 3
+main, After Loop Propagation, 1, 2, 3
+main, After Insertion, 3, 3, 6
+main, After Modification, 3, 3, 6
+main, After Elimination, 1, 2, 3
+main, After Loop Propagation, 1, 2, 3
+main, After Insertion, 3, 3, 6
+main, After Modification, 3, 3, 6
+main, After Elimination, 1, 2, 3
+main, After Loop Propagation, 1, 2, 3
+main, After Insertion, 3, 3, 6
+main, After Modification, 3, 3, 6
+main, After Elimination, 1, 2, 3
+main, After Loop Propagation, 1, 2, 3
+main, After Insertion, 3, 3, 6
+main, After Modification, 3, 3, 6
+main, After Elimination, 1, 2, 3
+main, After Loop Propagation, 1, 2, 3
+main, After Insertion, 3, 3, 6
+main, After Modification, 3, 3, 6
+main, After Elimination, 1, 2, 3
+main, After Loop Propagation, 1, 2, 3
+main, After Insertion, 3, 3, 6
+main, After Modification, 3, 3, 6
+main, After Elimination, 1, 2, 3
+main, After Loop Propagation, 1, 2, 3
+main, After Insertion, 3, 3, 6
+main, After Modification, 3, 3, 6
+main, After Elimination, 3, 3, 6
+main, After Loop Propagation, 3, 3, 6
