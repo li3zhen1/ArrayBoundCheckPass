@@ -38,6 +38,8 @@
 #let hl = table.hline(stroke: .6pt)
 #let hl2 = table.hline(stroke: .3pt)
 
+\
+
 = Baseline
 #let stat_baseline_size = csv("stat_baseline_size.csv").flatten()
 
@@ -59,7 +61,7 @@
   )
   let stage = "transformed"
   let ft = csv("stat_baseline/" + bench + "-" + stage + ".csv").flatten()
-  let r2 = (stage, [#fsize2], _n(ft, 12), _n(ft, 13), _n(ft, 9),)
+  let r2 = ("baseline", [#fsize2], _n(ft, 12), _n(ft, 13), _n(ft, 9),)
 
   let r3 = (
     [*ratio*],
@@ -71,6 +73,12 @@
 
   (hl, ..r1, ..r2, hl2, ..r3)
 }
+
+#v(0.5em)
+
+The llvm bytecode size are measured by python script ```python os.path.get_size()```. 
+
+The time are measured by a ```sh time``` based profiling tool ```sh hyperfine```, which runs the program 2 times for warmup and then 10 times to take the average. (macOS seems do not have  equivalent to ```sh perf``` on Linux.)
 
 #text(features: ("tnum": 1))[
   #set table(align: (x, _) => if x < 2 { left } else { right })
