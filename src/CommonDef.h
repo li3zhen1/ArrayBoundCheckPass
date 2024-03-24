@@ -26,17 +26,17 @@ constexpr auto CHECK_UB = "checkUpperBound";
 
 // #ifdef MODIFICATION
 // #else
-#define MODIFICATION false
+#define MODIFICATION true
 // #endif
 
 // #ifdef ELIMINATION
 // #else
-#define ELIMINATION false
+#define ELIMINATION true
 // #endif
 
 // #ifdef LOOP_PROPAGATION
 // #else
-#define LOOP_PROPAGATION false
+#define LOOP_PROPAGATION true
 // #endif
 
 // #ifdef CLEAN_REDUNDANT_CHECK_IN_SAME_BB
@@ -45,7 +45,7 @@ constexpr auto CHECK_UB = "checkUpperBound";
 // #endif
 
 // #ifndef DUMP_STATS
-#define DUMP_STATS false
+#define DUMP_STATS true
 // #endif
 
 #define RedO llvm::WithColor(O).changeColor(raw_ostream::RED, true, false)

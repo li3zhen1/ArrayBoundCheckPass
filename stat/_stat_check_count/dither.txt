@@ -1,0 +1,40 @@
+initializeRandomImage, After Insertion, 0, 0, 0
+initializeRandomImage, After Modification, 0, 0, 0
+initializeRandomImage, After Elimination, 0, 0, 0
+initializeRandomImage, After Loop Propagation, 0, 0, 0
+saveImage, After Insertion, 0, 0, 0
+saveImage, After Modification, 0, 0, 0
+saveImage, After Elimination, 0, 0, 0
+saveImage, After Loop Propagation, 0, 0, 0
+initializeRandomColouredImage, After Insertion, 0, 0, 0
+initializeRandomColouredImage, After Modification, 0, 0, 0
+initializeRandomColouredImage, After Elimination, 0, 0, 0
+initializeRandomColouredImage, After Loop Propagation, 0, 0, 0
+initializeImage, After Insertion, 0, 0, 0
+initializeImage, After Modification, 0, 0, 0
+initializeImage, After Elimination, 0, 0, 0
+initializeImage, After Loop Propagation, 0, 0, 0
+initializeColoredImage, After Insertion, 0, 0, 0
+initializeColoredImage, After Modification, 0, 0, 0
+initializeColoredImage, After Elimination, 0, 0, 0
+initializeColoredImage, After Loop Propagation, 0, 0, 0
+floydDitherKernel, After Insertion, 46, 46, 92
+floydDitherKernel, After Modification, 60, 60, 120
+floydDitherKernel, After Elimination, 4, 8, 12
+floydDitherKernel, After Loop Propagation, 4, 7, 11
+glibc_compat_rand, After Insertion, 4, 4, 8
+glibc_compat_rand, After Modification, 13, 8, 21
+glibc_compat_rand, After Elimination, 3, 5, 8
+glibc_compat_rand, After Loop Propagation, 3, 5, 8
+glibc_compat_srand, After Insertion, 7, 7, 14
+glibc_compat_srand, After Modification, 8, 8, 16
+glibc_compat_srand, After Elimination, 3, 5, 8
+glibc_compat_srand, After Loop Propagation, 3, 2, 5
+main, After Insertion, 4, 4, 8
+main, After Modification, 4, 4, 8
+main, After Elimination, 2, 2, 4
+main, After Loop Propagation, 2, 1, 3
+orderedDitherKernel, After Insertion, 32, 32, 64
+orderedDitherKernel, After Modification, 32, 32, 64
+orderedDitherKernel, After Elimination, 20, 20, 40
+orderedDitherKernel, After Loop Propagation, 20, 20, 40

@@ -12,7 +12,7 @@ benchs = [
     "check_modification",
 ]
 
-STAT_COMPILE_TIME = "stat_compile_time"
+STAT_COMPILE_TIME = "stat_compile_check_count"
 
 # make stat dir if not exist
 if not os.path.exists(STAT_COMPILE_TIME):

@@ -1,0 +1,1 @@
+clang++ -c BoundCheckWithDump.cpp -o BoundCheckWithDump.o
