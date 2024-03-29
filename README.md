@@ -1,6 +1,6 @@
 # An LLVM pass for bound check insertion and optimization based on Gupta et al.'s paper
 
-This repository contains an LLVM pass for bound check insertion and optimization based on the paper "Optimizing Array Bound Checks Using Value Profiling" by Gupta et al. 
+This repository contains an LLVM pass for bound check insertion and optimization based on the paper **Optimizing array bound checks using flow analysis** by Gupta et al. 
 
 ## Benchmarks
 
